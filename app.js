@@ -310,7 +310,7 @@ async function renderizar(ej) {
 // ---------------------------------------------------------------- vistas
 function nav(activa) {
   if (!sesion) { $nav.innerHTML = ''; return; }
-  const links = [['#/', 'Inicio', 'inicio']];
+  const links = [['#/', perfil?.rol === 'docente' ? 'Lecciones' : 'Inicio', 'inicio']];
   if (perfil?.rol === 'docente') links.push(['#/docente', 'Panel docente', 'docente']);
   $nav.innerHTML = links.map(([u, t, k]) => `<a href="${u}" class="${k === activa ? 'activo' : ''}">${t}</a>`).join('') +
     `<span class="chip">${esc(perfil?.nombre || sesion.user.email)}</span>` + (DEMO ? '<span class="chip pend">demo</span>' : '<a href="#/salir">Salir</a>');
@@ -353,6 +353,16 @@ async function vInicio() {
   $app.innerHTML = `<p class="cargando">Preparando tu próxima tarea…</p>`;
   const [intentos, eventos] = await Promise.all([api.misIntentos(), api.misEventos()]);
   let { m, escenarios, vocab } = await cargarModelo(intentos, eventos, !!perfil?.orales_zoom);
+  if (perfil?.rol === 'docente') {                    // el docente no recibe tareas: ve las lecciones en vista previa
+    const est0 = estadoAlumno(m);
+    $app.innerHTML = `<h1>Lecciones</h1><p class="sub">Vista previa de todas las lecciones y sus ejercicios. Los informes de alumnos están en «Panel docente».</p>`;
+    const l = h(`<div class="lista"></div>`);
+    est0.filas.forEach(f => l.append(h(`<a class="fila" href="#/e/${f.s.id}"><div class="txt"><b>${esc(f.s.id)} · ${esc(f.s.nombre)}</b><small>${esc(f.s.nivel || '')} · ${f.total} ejercicios</small></div></a>`)));
+    const sinEsc = m.ejs.filter(e => !e.escenario).length;
+    if (sinEsc) l.append(h(`<div class="fila"><div class="txt"><b>Práctica y repaso</b><small>${sinEsc} ejercicios sin lección (bancos de preguntas para repasos y pruebas)</small></div></div>`));
+    $app.append(l);
+    return;
+  }
   let est = estadoAlumno(m), sig = siguienteTarea(m);
   if (sig.tipo === 'iniciar') {                       // primer escenario: se fija sin preguntar
     await api.registrar('escenario', [sig.escenario.id]); return vInicio();
@@ -440,11 +450,6 @@ async function vInicio() {
     const c = h(`<div class="tarjeta"><h2 style="margin-top:0">Comentarios de tu profesor</h2></div>`);
     coment.forEach(i => c.append(h(`<div class="regla"><b><a href="#/x/${i.ejercicio_id}">Tarea ${esc(i.ejercicio_id)}</a>${i.puntaje != null ? ' · ' + Math.round(i.puntaje) + ' %' : ''}</b>${esc(i.feedback)}</div>`)));
     $app.append(c);
-  }
-  if (perfil.rol === 'docente') {
-    const l = h(`<details class="tarjeta"><summary>Vista docente: recorrer las lecciones</summary><div class="lista" style="margin-top:10px"></div></details>`);
-    est.filas.forEach(f => l.querySelector('.lista').append(h(`<a class="fila" href="#/e/${f.s.id}"><div class="txt"><b>${esc(f.s.id)} · ${esc(f.s.nombre)}</b><small>${f.total} ejercicios</small></div></a>`)));
-    $app.append(l);
   }
 }
 

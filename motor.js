@@ -25,6 +25,7 @@ const INTERVALOS_DIAS = [1, 3, 7, 21, 60];
 const PESO_REGLA = 12;          // una regla nueva "pesa" como 12 palabras nuevas
 export const PALABRAS_POR_TARJETA = 12;
 
+export const ALFABETO = [['EJ0003', 'АОКМТ'], ['EJ0007', 'СРУВХЕН'], ['EJ0013', 'БИЛГПДФЗЭ'], ['EJ0018', 'ЖЧЦШЩЮЯЁЙЫЬЪ']];
 export const ORALES = new Set(['TE01', 'TE15', 'TE17']);   // escuchar y repetir, producción oral, leer en voz alta
 const lista = s => String(s || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
 const DIA = 864e5;
@@ -63,6 +64,21 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
       reqG: [...new Set([...lista(e.gramatica_objetivo), ...pr.filter(x => /^G\d/.test(x))])],
     };
   });
+  // Ninguna regla se presenta antes de conocer las letras que usan sus ejemplos y explicación:
+  // cada ejercicio hereda como prerrequisito los grupos del alfabeto que piden sus reglas.
+  const alf = ALFABETO.filter(([id]) => ejs.some(e => e.id === id)).map(([id]) => id);
+  const grupoDe = {}; ALFABETO.forEach(([id, ls]) => [...ls].forEach(l => grupoDe[l] = id));
+  const gruposRegla = g => {
+    const r = regla[g]; if (!r) return [];
+    const txt = [r.nombre, r.descripcion, r.ejemplo, r.explicacion].join(' ').toUpperCase();
+    const k = Math.max(-1, ...[...new Set(txt.match(/[А-ЯЁ]/g) || [])].map(l => alf.indexOf(grupoDe[l])));
+    return alf.slice(0, k + 1);
+  };
+  for (const e of ejs) {
+    if (alf.includes(e.id)) { e.reqReglas = []; continue; }        // las letras se presentan sin reglas previas
+    const extra = e.reqReglas.flatMap(gruposRegla);
+    if (extra.length) e.reqEj = [...new Set([...e.reqEj, ...extra])];
+  }
   const ctx = { formas };
   for (const e of ejs) Object.assign(e, focoEjercicio(ctx, e));
   const porId = new Map(ejs.map(e => [e.id, e]));
