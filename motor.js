@@ -513,6 +513,34 @@ export function textoProyeccion(p, { alumno = true } = {}) {
     : `${pre}${p.nivel} en ~${p.dias} ${p.dias === 1 ? 'día' : 'días'}`;
 }
 
+// ---------- vista docente: orden sugerido dentro de cada lección y práctica adicional ----------
+// Recorre las lecciones por su orden y, dentro de cada una, elige primero lo disponible que menos cosas nuevas exige
+// (igual que el motor para un alumno que empieza de cero).
+export function panorama(m) {
+  const hechos = new Set(), K = new Set(), res = new Map();
+  for (const s of m.esc) {
+    const rest = m.ejs.filter(e => e.escenario === s.id), orden = [];
+    while (rest.length) {
+      const disp = rest.filter(e => e.reqEj.every(id => hechos.has(id) || !m.porId.get(id)?.escenario));
+      const pool = disp.length ? disp : rest;
+      const c = e => e.reqReglas.filter(x => !K.has(x)).length * PESO_REGLA + e.reqV.filter(x => !K.has(x)).length;
+      pool.sort((a, b) => c(a) - c(b) || a.id.localeCompare(b.id));
+      const e = pool[0]; orden.push(e); hechos.add(e.id); e.reqReglas.forEach(x => K.add(x)); e.reqV.forEach(x => K.add(x));
+      rest.splice(rest.indexOf(e), 1);
+    }
+    res.set(s.id, { orden, practica: [] });
+  }
+  // práctica adicional (bancos sin lección): se muestra en la primera lección que enseña su regla principal
+  const primeraLeccion = {};
+  for (const s of m.esc) for (const e of res.get(s.id).orden) for (const g of e.reqG) primeraLeccion[g] ??= s.id;
+  const sinLeccion = [];
+  for (const e of m.ejs.filter(x => !x.escenario)) {
+    const sId = e.gram.map(g => primeraLeccion[g]).find(Boolean);
+    if (sId) res.get(sId).practica.push(e); else sinLeccion.push(e);
+  }
+  return { porLeccion: res, sinLeccion };
+}
+
 export function etiquetaTema(m, s) {
   const t = lista(s?.temas).map(id => m.nombreTema[id]).filter(Boolean);
   return t.join(' · ');

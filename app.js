@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_KEY, NOMBRE_CURSO } from './config.js';
-import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, resumenPalabras, proyeccion, textoProyeccion, seleccionActiva, sortearPreguntas, itemDeRef, ORALES, HABILIDADES, HABILIDAD } from './motor.js';
+import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, resumenPalabras, proyeccion, textoProyeccion, seleccionActiva, sortearPreguntas, itemDeRef, ORALES, HABILIDADES, HABILIDAD } from './motor.js';
 let vocabCache = null, formasCache = null;
 let reglasCache = null;
 
@@ -52,6 +52,7 @@ async function crearSupabase() {
     },
     async vocabulario(lista) { return lista.length ? ok(await sb.from('vocabulario').select('id,lema,traduccion,categoria').in('id', lista)) : []; },
     async misEventos() { return ok(await sb.from('eventos').select('tipo,ref,creado_en').eq('alumno_id', sesion.user.id)); },
+    async reiniciarAlumno(uid) { ok(await sb.from('eventos').delete().eq('alumno_id', uid)); ok(await sb.from('intentos').delete().eq('alumno_id', uid)); },
     async eventosDe(uid) { return ok(await sb.from('eventos').select('tipo,ref,creado_en').eq('alumno_id', uid)); },
     async registrar(tipo, refs) { ok(await sb.from('eventos').insert(refs.map(ref => ({ tipo, ref })))); },
     async registrarPara(alumno_id, tipo, refs, creado_en) { ok(await sb.from('eventos').insert(refs.map(ref => ({ alumno_id, tipo, ref, ...(creado_en ? { creado_en } : {}) })))); },
@@ -120,7 +121,7 @@ async function crearDemo() {
     async guardarIntento(o) { intentos.push({ ...o, creado_en: new Date().toISOString() }); sessionStorage.setItem('demo_intentos', JSON.stringify(intentos)); return o; },
     async subirGrabacion() { return 'demo/grabacion.webm'; },
     async url(bucket, path) { return bucket === 'materiales' ? 'demo/media/' + path : null; },
-    async upsert() {}, async subirMedio() {}, async alumnos() { return []; }, async intentosDe() { return []; }, async pendientes() { return []; }, async revisar() {}, async renombrar() {}, async actualizarPerfil() {},
+    async upsert() {}, async subirMedio() {}, async alumnos() { return []; }, async intentosDe() { return []; }, async pendientes() { return []; }, async revisar() {}, async renombrar() {}, async actualizarPerfil() {}, async reiniciarAlumno() {},
   };
 }
 
@@ -354,12 +355,14 @@ async function vInicio() {
   const [intentos, eventos] = await Promise.all([api.misIntentos(), api.misEventos()]);
   let { m, escenarios, vocab } = await cargarModelo(intentos, eventos, !!perfil?.orales_zoom);
   if (perfil?.rol === 'docente') {                    // el docente no recibe tareas: ve las lecciones en vista previa
-    const est0 = estadoAlumno(m);
-    $app.innerHTML = `<h1>Lecciones</h1><p class="sub">Vista previa de todas las lecciones y sus ejercicios. Los informes de alumnos están en «Panel docente».</p>`;
+    const pan = panorama(m);
+    $app.innerHTML = `<h1>Lecciones</h1><p class="sub">Vista previa de todas las lecciones, con sus ejercicios en el orden en que los recibiría un alumno que empieza de cero (el orden real se adapta a cada alumno). Los informes de alumnos están en «Panel docente».</p>`;
     const l = h(`<div class="lista"></div>`);
-    est0.filas.forEach(f => l.append(h(`<a class="fila" href="#/e/${f.s.id}"><div class="txt"><b>${esc(f.s.id)} · ${esc(f.s.nombre)}</b><small>${esc(f.s.nivel || '')} · ${f.total} ejercicios</small></div></a>`)));
-    const sinEsc = m.ejs.filter(e => !e.escenario).length;
-    if (sinEsc) l.append(h(`<div class="fila"><div class="txt"><b>Práctica y repaso</b><small>${sinEsc} ejercicios sin lección (bancos de preguntas para repasos y pruebas)</small></div></div>`));
+    for (const s0 of m.esc) {
+      const r = pan.porLeccion.get(s0.id);
+      l.append(h(`<a class="fila" href="#/e/${s0.id}"><div class="txt"><b>${esc(s0.id)} · ${esc(s0.nombre)}</b><small>${esc(s0.nivel || '')} · ${r.orden.length} ejercicios${r.practica.length ? ` · ${r.practica.length} de práctica adicional` : ''}</small></div></a>`));
+    }
+    if (pan.sinLeccion.length) l.append(h(`<a class="fila" href="#/e/_practica"><div class="txt"><b>Práctica sin lección asignada</b><small>${pan.sinLeccion.length} ejercicios cuya regla todavía no se enseña en ninguna lección (sobre todo A2)</small></div></a>`));
     $app.append(l);
     return;
   }
@@ -457,22 +460,32 @@ async function vEscenario(id) {
   if (perfil?.rol !== 'docente') return vInicio();
   nav('inicio');
   $app.innerHTML = `<p class="cargando">Cargando…</p>`;
-  const [e, ejs, mats, hechos] = await Promise.all([api.escenario(id), api.ejerciciosEsc(id), api.materialesEsc(id), progreso()]);
-  $app.innerHTML = `<div class="migas"><a href="#/">← Mis lecciones</a></div><h1>${esc(e.nombre)}</h1><p class="sub">${esc(e.objetivo_comunicativo || '')}</p>`;
-  const textos = mats.filter(m => m.tipo === 'texto' && m.funcion === 'introduccion');
+  const [ints, evs] = await Promise.all([api.misIntentos(), api.misEventos()]);
+  const { m } = await cargarModelo(ints, evs);
+  const pan = panorama(m);
+  const fila = (x, i) => `<a class="fila" href="#/x/${x.id}"><div class="num">${i + 1}</div><div class="txt"><b>${esc(x.instrucciones)}</b><small>${esc(x.id)} · ${esc(x.hab)}${x.nMostrar ? ` · banco de ${x.itemsBanco.length} preguntas, se muestran ${x.nMostrar}` : ''}</small></div></a>`;
+  if (id === '_practica') {
+    $app.innerHTML = `<div class="migas"><a href="#/">← Lecciones</a></div><h1>Práctica sin lección asignada</h1><p class="sub">Se usan en repasos y pruebas cuando el alumno ya conoce su regla.</p>`;
+    $app.append(h(`<div class="lista">${pan.sinLeccion.map(fila).join('')}</div>`));
+    return;
+  }
+  const [e, mats] = await Promise.all([api.escenario(id), api.materialesEsc(id)]);
+  const r = pan.porLeccion.get(id) || { orden: [], practica: [] };
+  $app.innerHTML = `<div class="migas"><a href="#/">← Lecciones</a></div><h1>${esc(e.nombre)}</h1><p class="sub">${esc(e.objetivo_comunicativo || '')}</p>`;
+  const textos = mats.filter(x => x.tipo === 'texto' && x.funcion === 'introduccion');
   if (textos.length) {
     const t = h(`<details class="tarjeta"><summary>Textos de la lección (${textos.length})</summary></details>`);
-    for (const m of textos) t.append(await bloqueMaterial(m));
+    for (const x of textos) t.append(await bloqueMaterial(x));
     $app.append(t);
   }
-  $app.append(h(`<h2>Ejercicios</h2>`));
-  const lista = h(`<div class="lista"></div>`);
-  ejs.forEach((x, i) => {
-    const r = hechos.get(x.id);
-    const chip = !r ? '' : r.estado?.startsWith('pendiente') ? '<span class="chip pend">enviado</span>' : r.estado === 'revisado' ? `<span class="chip ok">revisado</span>` : `<span class="chip ${r.correcto ? 'ok' : 'mal'}">${Math.round(r.puntaje ?? 0)} %</span>`;
-    lista.append(h(`<a class="fila" href="#/x/${x.id}"><div class="num">${i + 1}</div><div class="txt"><b>${esc(x.instrucciones)}</b></div>${chip}</a>`));
-  });
-  $app.append(lista);
+  $app.append(h(`<h2>Ejercicios de la lección</h2>`));
+  $app.append(h(`<p class="sub">Orden para un alumno que empieza de cero.</p>`));
+  $app.append(h(`<div class="lista">${r.orden.map(fila).join('')}</div>`));
+  if (r.practica.length) {
+    $app.append(h(`<h2>Práctica adicional</h2>`));
+    $app.append(h(`<p class="sub">No forman parte del camino de la lección: se usan en repasos y pruebas, cuando el alumno ya conoce su regla y sus palabras.</p>`));
+    $app.append(h(`<div class="lista">${r.practica.map(fila).join('')}</div>`));
+  }
 }
 
 async function vEjercicio(id) {
@@ -683,6 +696,15 @@ async function tAlumno(el, uid) {
   const zt = h(`<label style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" ${p.orales_zoom ? 'checked' : ''}> Parte oral por Zoom: los ejercicios orales no se le muestran y van a la lista de la clase</label>`);
   zt.querySelector('input').onchange = async e => { await api.actualizarPerfil(uid, { orales_zoom: e.target.checked }); location.reload(); };
   el.append(zt);
+  const rz = h(`<div style="margin:0 0 12px"><button class="btn sec" type="button">Reiniciar progreso del alumno</button> <span class="sub"></span></div>`);
+  const [bR, sR] = [rz.querySelector('button'), rz.querySelector('span')]; let paso = 0;
+  bR.onclick = async () => {
+    if (!paso) { paso = 1; bR.textContent = 'Sí, borrar todo su progreso'; bR.classList.add('rojo'); sR.textContent = 'Se borrarán sus intentos, grabaciones registradas, palabras y reglas presentadas y repasos. No se puede deshacer.'; return; }
+    bR.disabled = true;
+    try { await api.reiniciarAlumno(uid); sR.textContent = 'Progreso borrado ✓'; setTimeout(() => location.reload(), 800); }
+    catch (err) { sR.textContent = err.message; bR.disabled = false; }
+  };
+  el.append(rz);
   el.append(h(`<p class="meta">${esc(textoProyeccion(proyeccion(m), { alumno: false }))}</p>`));
   // ejercicios orales pendientes para la clase por Zoom
   const pendZoom = [...m.zoomPend].filter(id => !m.zoomOk.has(id)).map(id => m.porId.get(id)).filter(Boolean);
