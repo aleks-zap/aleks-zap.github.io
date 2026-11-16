@@ -1,5 +1,7 @@
 import { SUPABASE_URL, SUPABASE_KEY, NOMBRE_CURSO } from './config.js';
-import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, HABILIDADES, HABILIDAD } from './motor.js';
+import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, resumenPalabras, proyeccion, textoProyeccion, seleccionActiva, sortearPreguntas, itemDeRef, ORALES, HABILIDADES, HABILIDAD } from './motor.js';
+let vocabCache = null, formasCache = null;
+let reglasCache = null;
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $app = document.getElementById('app');
@@ -35,7 +37,24 @@ async function crearSupabase() {
     async logout() { await sb.auth.signOut(); },
     async perfil(uid) { return ok(await sb.from('perfiles').select('*').eq('id', uid).single()); },
     async todosEscenarios() { return ok(await sb.from('escenarios').select('*').order('orden')); },
-    async ejerciciosLigeros() { return ok(await sb.from('ejercicios').select('id,tipo_ejercicio,escenario,gramatica_objetivo,instrucciones').order('id')); },
+    async ejerciciosLigeros() { return ok(await sb.from('ejercicios').select('*').order('id')); },
+    async vocabUso() {                                   // palabras del curso (activas y pasivas), en páginas de 1000
+      const out = [];
+      for (let i = 0; ; i += 1000) {
+        const r = ok(await sb.from('vocabulario').select('id,lema,traduccion,categoria,uso').not('uso', 'is', null).order('id').range(i, i + 999));
+        out.push(...r); if (r.length < 1000) break;
+      }
+      return out;
+    },
+    async reglas() {
+      const [g, p] = await Promise.all([sb.from('gramatica').select('id,nombre,nivel,descripcion,ejemplo,prerrequisitos,explicacion'), sb.from('pronunciacion').select('id,nombre,nivel,descripcion,ejemplo,prerrequisitos,explicacion')]);
+      return [...ok(g), ...ok(p)];
+    },
+    async vocabulario(lista) { return lista.length ? ok(await sb.from('vocabulario').select('id,lema,traduccion,categoria').in('id', lista)) : []; },
+    async misEventos() { return ok(await sb.from('eventos').select('tipo,ref,creado_en').eq('alumno_id', sesion.user.id)); },
+    async eventosDe(uid) { return ok(await sb.from('eventos').select('tipo,ref,creado_en').eq('alumno_id', uid)); },
+    async registrar(tipo, refs) { ok(await sb.from('eventos').insert(refs.map(ref => ({ tipo, ref })))); },
+    async registrarPara(alumno_id, tipo, refs, creado_en) { ok(await sb.from('eventos').insert(refs.map(ref => ({ alumno_id, tipo, ref, ...(creado_en ? { creado_en } : {}) })))); },
     async tipos() { return ok(await sb.from('tipos_ejercicio').select('id,nombre,habilidades_principales')); },
     async temas() { return ok(await sb.from('temas').select('*')); },
     async gramaticaTodas() { return ok(await sb.from('gramatica').select('id,nombre')); },
@@ -46,7 +65,7 @@ async function crearSupabase() {
     async materiales(lista) { return lista.length ? ok(await sb.from('materiales').select('*').in('id', lista)) : []; },
     async materialesEsc(id) { return ok(await sb.from('materiales').select('*').ilike('escenarios', `%${id}%`).order('id')); },
     async gramatica(lista) { return lista.length ? ok(await sb.from('gramatica').select('id,nombre,descripcion,ejemplo').in('id', lista)) : []; },
-    async misIntentos() { return ok(await sb.from('intentos').select('ejercicio_id,correcto,puntaje,estado,feedback,creado_en').eq('alumno_id', sesion.user.id)); },
+    async misIntentos() { return ok(await sb.from('intentos').select('ejercicio_id,correcto,puntaje,estado,feedback,respuesta,creado_en').eq('alumno_id', sesion.user.id)); },
     async guardarIntento(o) { return ok(await sb.from('intentos').insert(o).select().single()); },
     async subirGrabacion(blob) {
       const ext = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
@@ -66,6 +85,7 @@ async function crearSupabase() {
     async subirMedio(file, path) { ok(await sb.storage.from('materiales').upload(path, file, { upsert: true, contentType: file.type || undefined })); },
     async alumnos() { return ok(await sb.from('perfiles').select('*').order('nombre')); },
     async renombrar(id, nombre) { ok(await sb.from('perfiles').update({ nombre }).eq('id', id)); },
+    async actualizarPerfil(id, campos) { ok(await sb.from('perfiles').update(campos).eq('id', id)); },
     async intentosDe(uid) { return ok(await sb.from('intentos').select('*').eq('alumno_id', uid).order('creado_en', { ascending: false })); },
     async pendientes() { return ok(await sb.from('intentos').select('*').in('estado', ['pendiente_docente', 'pendiente_ia']).order('creado_en')); },
     async revisar(id, campos) { ok(await sb.from('intentos').update(campos).eq('id', id)); },
@@ -75,13 +95,19 @@ async function crearSupabase() {
 async function crearDemo() {
   const d = await (await fetch('demo/demo.json')).json();
   const intentos = JSON.parse(sessionStorage.getItem('demo_intentos') || '[]');
+  const eventos = JSON.parse(sessionStorage.getItem('demo_eventos') || '[]');
   const by = (t, id) => d[t].find(x => x.id === id);
   return {
     async sesion() { return { user: { id: 'demo', email: 'demo@demo' } }; },
     async login() {}, async logout() {},
-    async perfil() { return { id: 'demo', nombre: 'Alumno de prueba', rol: new URLSearchParams(location.search).get('demo') === 'docente' ? 'docente' : 'alumno' }; },
+    async perfil() { return { id: 'demo', nombre: 'Alumno de prueba', rol: new URLSearchParams(location.search).get('demo') === 'docente' ? 'docente' : 'alumno', orales_zoom: new URLSearchParams(location.search).has('zoom') }; },
     async todosEscenarios() { return d.escenarios; },
     async ejerciciosLigeros() { return d.ejercicios; },
+    async reglas() { return d.reglas || []; },
+    async vocabUso() { return (d.vocabulario || []).filter(v => v.uso); },
+    async vocabulario(l) { return (d.vocabulario || []).filter(v => l.includes(v.id)); },
+    async misEventos() { return eventos; }, async eventosDe() { return []; }, async registrarPara() {},
+    async registrar(tipo, refs) { refs.forEach(ref => eventos.push({ tipo, ref, creado_en: new Date().toISOString() })); sessionStorage.setItem('demo_eventos', JSON.stringify(eventos)); },
     async tipos() { return d.tipos; }, async temas() { return d.temas; }, async gramaticaTodas() { return d.gramatica; },
     async escenario(id) { return by('escenarios', id); },
     async ejerciciosEsc(id) { return d.ejercicios.filter(e => e.escenario === id); },
@@ -94,7 +120,7 @@ async function crearDemo() {
     async guardarIntento(o) { intentos.push({ ...o, creado_en: new Date().toISOString() }); sessionStorage.setItem('demo_intentos', JSON.stringify(intentos)); return o; },
     async subirGrabacion() { return 'demo/grabacion.webm'; },
     async url(bucket, path) { return bucket === 'materiales' ? 'demo/media/' + path : null; },
-    async upsert() {}, async subirMedio() {}, async alumnos() { return []; }, async intentosDe() { return []; }, async pendientes() { return []; }, async revisar() {}, async renombrar() {},
+    async upsert() {}, async subirMedio() {}, async alumnos() { return []; }, async intentosDe() { return []; }, async pendientes() { return []; }, async revisar() {}, async renombrar() {}, async actualizarPerfil() {},
   };
 }
 
@@ -174,7 +200,7 @@ function rItems(c) {
         f.classList.remove('ok', 'mal'); f.classList.add(ok ? 'ok' : 'mal');
         f.querySelector('.marca-res')?.remove();
         const correcta = it.tipo === 'choice' ? it.answer : (it.answers || [])[0];
-        det.push({ q: it.q, r: v, c: correcta, ok });
+        det.push({ q: it.q, r: v, c: correcta, ok, p: it.tipo !== 'choice' });
         f.append(h(`<div class="marca-res ${ok ? 'ok' : 'mal'}">${ok ? '✓ Correcto' : `✗ Respuesta: <span class="correcta">${esc(correcta)}</span>`}</div>`));
       });
       return { total: c.items.length, bien, respuesta: resp, detalle: det };
@@ -232,7 +258,7 @@ function rConjunto(c) {
     ins.forEach(f => { const v = f.querySelector('input').value; resp.push(v); const k = libres.findIndex(g => g && igual(v, g)); const ok = k >= 0; if (ok) { libres[k] = null; bien++; }
       f.classList.remove('ok', 'mal'); f.classList.add(ok ? 'ok' : 'mal'); });
     const falt = libres.filter(Boolean).map(g => g[0]);
-    const det = resp.map(r => ({ q: 'palabra', r, c: '', ok: c.answers.some(g => igual(r, g)) }));
+    const det = resp.map(r => ({ q: 'palabra', r, c: r, ok: c.answers.some(g => igual(r, g)), p: true }));
     if (falt.length) el.append(h(`<p class="marca-res mal">Faltaron: <span class="correcta">${esc(falt.join(', '))}</span></p>`));
     return { total: c.answers.length, bien, respuesta: resp, detalle: det };
   } };
@@ -314,42 +340,93 @@ async function progreso() {
   return hechos;
 }
 
-async function cargarModelo(intentos) {
-  const [escenarios, ejercicios, tipos, temas] = await Promise.all([api.todosEscenarios(), api.ejerciciosLigeros(), api.tipos(), api.temas()]);
-  return { m: prepararModelo({ escenarios, ejercicios, tipos, intentos, temas }), escenarios };
+async function cargarModelo(intentos, eventos, oralesZoom = false) {
+  const [escenarios, ejercicios, tipos, temas, reglas, voc, formas] = await Promise.all([api.todosEscenarios(), api.ejerciciosLigeros(), api.tipos(), api.temas(),
+    reglasCache || api.reglas(), vocabCache || api.vocabUso(), formasCache || fetch('formas.json').then(r => r.ok ? r.json() : { f: {}, m: {} }).catch(() => ({ f: {}, m: {} }))]);
+  reglasCache = reglas; vocabCache = voc; formasCache = formas;
+  const vocab = Object.fromEntries(voc.map(v => [v.id, v]));
+  return { m: prepararModelo({ escenarios, ejercicios, tipos, intentos, eventos, reglas, temas, formas, vocab, oralesZoom }), escenarios, vocab };
 }
 
 async function vInicio() {
   nav('inicio');
   $app.innerHTML = `<p class="cargando">Preparando tu próxima tarea…</p>`;
-  const intentos = await api.misIntentos();
-  const { m, escenarios } = await cargarModelo(intentos);
-  const est = estadoAlumno(m), sig = siguienteTarea(m);
+  const [intentos, eventos] = await Promise.all([api.misIntentos(), api.misEventos()]);
+  let { m, escenarios, vocab } = await cargarModelo(intentos, eventos, !!perfil?.orales_zoom);
+  let est = estadoAlumno(m), sig = siguienteTarea(m);
+  if (sig.tipo === 'iniciar') {                       // primer escenario: se fija sin preguntar
+    await api.registrar('escenario', [sig.escenario.id]); return vInicio();
+  }
+  if (sig.tipo === 'zoom') {                          // ejercicio oral: pasa a la lista de la clase por Zoom
+    await api.registrar('zoom', [sig.ejercicio.id]); return vInicio();
+  }
+  if (sig.tipo === 'sortear') {                       // ejercicio-banco: se fijan las preguntas que tocan
+    await api.registrar('sorteo', [sig.ref]); return vInicio();
+  }
+  if (sig.tipo === 'planificar') {                    // repaso del día: se fija al primer ingreso
+    await api.registrar('repaso', [sig.ref]); return vInicio();
+  }
   const hoy = intentos.filter(i => new Date(i.creado_en).toDateString() === new Date().toDateString()).length;
   $app.innerHTML = `<h1>Привет${perfil?.nombre ? ', ' + esc(perfil.nombre) : ''}!</h1>
-    <p class="sub">${hoy ? `Hoy llevas ${hoy} ${hoy === 1 ? 'tarea' : 'tareas'}. ¡Sigue así!` : 'Tu plan avanza paso a paso según lo que ya dominas.'}</p>`;
-
+    <p class="sub">${hoy ? `Hoy llevas ${hoy} ${hoy === 1 ? 'tarea' : 'tareas'}. ¡Sigue así!` : 'Tu plan avanza paso a paso según lo que ya sabes.'}</p>
+    <div class="meta">${esc(textoProyeccion(proyeccion(m)))}</div>`;
   const card = h(`<div class="tarjeta"></div>`);
-  if (sig.tipo === 'fin') card.append(h(`<p class="instr">¡Completaste todo el contenido disponible! 🎉 Tu profesor agregará más pronto.</p>`));
-  else {
-    const e0 = sig.opciones[0];
-    card.append(h(`<div class="etq">${sig.tipo === 'repaso' ? 'Repaso' : 'Siguiente paso'} · ${esc(e0.hab)}</div>`));
-    if (sig.opciones.length === 1) {
-      card.append(h(`<p class="instr">${esc(e0.instrucciones)}</p>`));
-      card.append(h(`<div class="acciones"><a class="btn" href="#/x/${e0.id}">Empezar →</a></div>`));
-    } else {
-      card.append(h(`<p class="instr">Elige el tema con el que prefieres practicar:</p>`));
-      const l = h(`<div class="lista"></div>`);
-      sig.opciones.forEach(o => l.append(h(`<a class="fila" href="#/x/${o.id}"><div class="txt"><b>${esc(etiquetaTema(m, o, escenarios))}</b><small>${esc(o.instrucciones)}</small></div><span class="btn sec">Elegir</span></a>`)));
-      card.append(l);
-    }
+  const filaAct = est.actual ? est.fila[est.actual] : null;
+  if (filaAct && !['elegir', 'fin', 'repasoDia', 'tarjetas', 'descanso'].includes(sig.tipo)) card.append(h(`<div class="etq">${esc(filaAct.s.nombre)} · ${filaAct.hechos} de ${filaAct.total}</div>`));
+  if (sig.tipo === 'descanso') {
+    card.append(h(`<p class="instr">¡Buen trabajo por hoy! 💪</p>`));
+    card.append(h(`<p>Tienes bastante vocabulario y gramática por repasar, así que por hoy no agregamos material nuevo: así lo que aprendiste se queda contigo. Mañana empezarás con el repaso y luego seguirás avanzando.</p>`));
+  } else if (sig.tipo === 'fin') card.append(h(`<p class="instr">${proyeccion(m).logrado && !proyeccion(m).nivel ? '¡Completaste todo el contenido disponible! 🎉 Tu profesor agregará más pronto.' : 'Ya hiciste todas las lecciones disponibles. 🎉 Sigue con tu repaso diario: así llegarás a dominar el nivel.'}</p>`));
+  else if (sig.tipo === 'elegir') {
+    card.append(h(`<p class="instr">¡Terminaste esta etapa! 🎉 ¿Con qué situación quieres seguir?</p>`));
+    const l = h(`<div class="lista"></div>`);
+    sig.opciones.forEach(o => {
+      const tema = etiquetaTema(m, o.s);
+      const f = h(`<button class="fila" type="button" style="text-align:left;width:100%;font:inherit;cursor:pointer"><div class="txt"><b>${esc(tema || o.s.nombre)}</b><small>${esc(o.s.objetivo_comunicativo || '')}</small></div><span class="btn sec">Elegir</span></button>`);
+      f.onclick = async () => { f.disabled = true; await api.registrar('escenario', [o.s.id]); vInicio(); };
+      l.append(f);
+    });
+    card.append(l);
+  } else if (sig.tipo === 'regla') {
+    const r = sig.regla, esP = /^P/.test(r.id);
+    card.append(h(`<div class="etq">${esP ? 'Pronunciación nueva' : 'Regla nueva'}${sig.pendientes > 1 ? ` · quedan ${sig.pendientes} antes del ejercicio` : ''}</div>`));
+    card.append(h(`<div class="regla" style="margin-top:6px"><b style="font-size:18px">${esc(r.nombre)}</b>${r.explicacion ? explicacionHtml(r.explicacion) : `<p style="margin:8px 0">${esc(r.descripcion || '')}</p>`}${r.ejemplo ? `<div class="texto-ru">${esc(r.ejemplo)}</div>` : ''}</div>`));
+    const b = h(`<div class="acciones"><button class="btn" type="button">Entendido, continuar →</button></div>`);
+    b.querySelector('button').onclick = async e => { e.target.disabled = true; await api.registrar('intro', [r.id]); vInicio(); };
+    card.append(b);
+  } else if (sig.tipo === 'palabras') {
+    const voc = await api.vocabulario(sig.ids); voc.sort((a, b) => sig.ids.indexOf(a.id) - sig.ids.indexOf(b.id));
+    card.append(h(`<div class="etq">Palabras nuevas${sig.pendientes > sig.ids.length ? ` · ${sig.ids.length} de ${sig.pendientes}` : ''}</div>`));
+    card.append(h(`<p class="instr">Antes del ejercicio, conoce estas palabras:</p>`));
+    const t = h(`<table class="vocab"></table>`);
+    voc.forEach(v => t.append(h(`<tr><td class="ru">${esc(v.lema)}</td><td>${esc(v.traduccion || '')}</td><td class="cat">${esc(v.categoria || '')}</td></tr>`)));
+    card.append(t);
+    const b = h(`<div class="acciones"><button class="btn" type="button">Ya las vi, continuar →</button></div>`);
+    b.querySelector('button').onclick = async e => { e.target.disabled = true; await api.registrar('intro', sig.ids); vInicio(); };
+    card.append(b);
+  } else if (sig.tipo === 'repasoDia') {
+    const e0 = sig.ejercicio;
+    card.append(h(`<div class="etq">Repaso de hoy · ${sig.k} de ${sig.n}</div>`));
+    card.append(h(`<p class="instr">${esc(e0.instrucciones)}</p>`));
+    card.append(h(`<div class="acciones"><a class="btn" href="#/x/${e0.id}">Empezar →</a></div>`));
+  } else if (sig.tipo === 'tarjetas') {
+    card.append(h(`<div class="etq">Repaso de hoy · palabras</div>`));
+    card.append(tarjetasRepaso(sig.items, vocab));
+  } else {
+    const e0 = sig.ejercicio;
+    card.append(h(`<div class="etq">${sig.tipo === 'repaso' ? 'Repaso' : 'Siguiente ejercicio'} · ${esc(e0.hab)}</div>`));
+    card.append(h(`<p class="instr">${esc(e0.instrucciones)}</p>`));
+    card.append(h(`<div class="acciones"><a class="btn" href="#/x/${e0.id}">Empezar →</a></div>`));
   }
   $app.append(card);
 
   // progreso por habilidad y nivel (sin mostrar el temario)
-  const pct = Math.round(100 * est.nivelGlobal);
+  const proy = proyeccion(m);
+  const pct = Math.round(100 * (proy.frac ?? est.nivelGlobal));
+  const pal = resumenPalabras(m);
   const prog = h(`<div class="tarjeta"><h2 style="margin-top:0">Tu progreso</h2>
-    <div class="etq">Nivel A1 · ${pct} % completado</div><div class="barra-prog" style="max-width:none"><i style="width:${pct}%"></i></div>
+    <div class="etq">Nivel ${esc(proy.nivel || proy.logrado || 'A1')} · ${pct} % dominado</div><div class="barra-prog" style="max-width:none"><i style="width:${pct}%"></i></div>
+    <p class="sub" style="margin:10px 0 0">Palabras que sabes usar: <b>${pal.activas}</b> · palabras que reconoces: <b>${pal.reconocidas}</b></p>
     <div class="cuadricula" style="margin-top:14px"></div></div>`);
   const g = prog.querySelector('.cuadricula');
   for (const hb of HABILIDADES) {
@@ -411,8 +488,18 @@ async function vEjercicio(id) {
   const esLectura = ['leer'].includes(c.tipo);
   for (const m of mats) if (!(esLectura && m.tipo === 'texto')) media.append(await bloqueMaterial(m));
 
-  const r = await renderizar(ej);
+  let ejR = ej;
+  if (c.n && Array.isArray(c.items) && perfil?.rol !== 'docente') {      // ejercicio-banco: solo las preguntas sorteadas
+    const [ints, evs] = await Promise.all([api.misIntentos(), api.misEventos()]);
+    const { m } = await cargarModelo(ints, evs, !!perfil?.orales_zoom);
+    const e = m.porId.get(id);
+    const sel = (e && (seleccionActiva(m, e) || sortearPreguntas(m, e))) || [];
+    const items = sel.map(r => itemDeRef(m, r)?.it).filter(Boolean);
+    if (items.length) ejR = { ...ej, contenido: { ...c, items } };
+  } else if (c.n && perfil?.rol === 'docente') card.querySelector('.instr').insertAdjacentHTML('afterend', `<p class="sub">Banco de ${c.items.length} preguntas${c.grupo ? ` (grupo ${esc(c.grupo)})` : ''}; al alumno se le muestran ${c.n}.</p>`);
+  const r = await renderizar(ejR);
   card.querySelector('.cuerpo').append(r.el);
+  if (card.querySelector('.cuerpo input[type=text], .cuerpo textarea')) card.querySelector('.cuerpo').after(tecladoRuso(card));
   const acc = card.querySelector('.acciones'), res = card.querySelector('.res');
   const bEnviar = h(`<button class="btn" type="button">${r.abierta ? 'Enviar' : 'Comprobar'}</button>`);
   acc.append(bEnviar);
@@ -421,6 +508,7 @@ async function vEjercicio(id) {
     try {
       const out = await r.corregir();
       if (out.abierta) {
+        if (perfil?.orales_zoom && ORALES.has(ej.tipo_ejercicio)) api.registrar('zoom', [id]).catch(() => {});
         await api.guardarIntento({ ejercicio_id: id, respuesta: out.respuesta, audio_path: out.audio || null, correcto: null, puntaje: null,
           estado: (out.respuesta?.texto || out.audio) ? 'pendiente_docente' : 'corregido' });
         res.append(h(`<div class="resultado pend">${out.audio || out.respuesta?.texto ? 'Enviado. Tu profesor lo revisará y verás sus comentarios aquí.' : 'Práctica registrada.'}</div>`));
@@ -440,17 +528,106 @@ async function vEjercicio(id) {
   };
 }
 
+// Explicación de una regla: texto con párrafos; las líneas que empiezan con «|» forman tablas.
+function explicacionHtml(txt) {
+  const out = []; let tabla = [];
+  const cerrar = () => { if (tabla.length) { out.push(`<table class="tabla-regla">${tabla.map((f, i) => `<tr>${f.map(c => i === 0 ? `<th>${esc(c)}</th>` : `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table>`); tabla = []; } };
+  for (const l of String(txt).split('\n')) {
+    const t = l.trim();
+    if (t.startsWith('|')) { const celdas = t.replace(/^\||\|$/g, '').split('|').map(c => c.trim()); if (!celdas.every(c => /^-+$/.test(c))) tabla.push(celdas); continue; }
+    cerrar(); if (t) out.push(`<p style="margin:8px 0">${esc(t)}</p>`);
+  }
+  cerrar(); return out.join('');
+}
+
+// ---------------------------------------------------------------- tarjetas de repaso de palabras
+function tarjetasRepaso(items, vocab) {
+  const el = h(`<div><p class="instr">Escribe en ruso las palabras que sabes usar y elige el significado de las que reconoces.</p></div>`);
+  const todas = Object.values(vocab);
+  const filas = items.map(({ id, modo }) => {
+    const v = vocab[id] || { lema: id, traduccion: '' };
+    let f;
+    if (modo === 'p') f = h(`<div class="item"><div class="q">${esc(v.traduccion)}</div><input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="en ruso"></div>`);
+    else {
+      const otras = barajar(todas.filter(x => x.id !== id && x.traduccion && x.traduccion !== v.traduccion)).slice(0, 3).map(x => x.traduccion);
+      f = h(`<div class="item"><div class="q" style="font-size:18px;font-weight:600">${esc(v.lema)}</div><select><option value="">— significado —</option>${barajar([v.traduccion, ...otras]).map(o => `<option>${esc(o)}</option>`).join('')}</select></div>`);
+    }
+    el.append(f); return { f, id, modo, v };
+  });
+  if (items.some(i => i.modo === 'p')) el.append(tecladoRuso(el));
+  const acc = h(`<div class="acciones"><button class="btn" type="button">Comprobar</button></div>`); el.append(acc);
+  acc.querySelector('button').onclick = async e => {
+    e.target.disabled = true;
+    const refs = filas.map(({ f, id, modo, v }) => {
+      const r = modo === 'p' ? f.querySelector('input').value : f.querySelector('select').value;
+      const ok = modo === 'p' ? igual(r, [v.lema]) : r === v.traduccion;
+      f.classList.add(ok ? 'ok' : 'mal');
+      f.append(h(`<div class="marca-res ${ok ? 'ok' : 'mal'}">${ok ? '✓' : `✗ <span class="correcta">${esc(modo === 'p' ? v.lema : v.traduccion)}</span>`}</div>`));
+      return `${id}|${ok ? 1 : 0}|${modo}`;
+    });
+    try { await api.registrar('tarjeta', refs); } catch (err) { acc.append(h(`<p class="error">${esc(err.message)}</p>`)); e.target.disabled = false; return; }
+    acc.innerHTML = ''; const b = h(`<button class="btn" type="button">Continuar →</button>`); b.onclick = () => vInicio(); acc.append(b);
+  };
+  return el;
+}
+
+// ---------------------------------------------------------------- teclado ruso en pantalla
+const FILAS_TECLADO = ['йцукенгшщзхъ', 'фывапролджэ', 'ячсмитьбюё'];
+function tecladoRuso(card) {
+  let campo = null, mayus = false;
+  card.addEventListener('focusin', e => { if (e.target.matches('input[type=text], textarea')) campo = e.target; });
+  const caja = h(`<div class="teclado-caja">
+    <div style="margin-top:12px"><button class="btn sec" type="button" data-t>⌨ Teclado ruso</button></div>
+    <div class="teclado" hidden></div>
+    <details class="ayuda-teclado"><summary>¿Cómo escribir en ruso con mi propio teclado?</summary>
+      <p><b>Windows:</b> Configuración → Hora e idioma → Idioma y región → Agregar un idioma → Ruso. Cambia de idioma con <b>Windows + Espacio</b>.</p>
+      <p><b>Mac:</b> Ajustes del Sistema → Teclado → Fuentes de entrada → Editar → + → Ruso (o «Ruso – PC»). Cambia con <b>Control + Espacio</b> o con 🌐.</p>
+      <p><b>Android (Gboard):</b> Ajustes → Idiomas → Añadir teclado → Ruso. Cambia manteniendo pulsada la barra espaciadora o con 🌐.</p>
+      <p><b>iPhone/iPad:</b> Ajustes → General → Teclado → Teclados → Añadir teclado → Ruso. Cambia con 🌐.</p>
+      <p>Mientras tanto puedes usar botón «⌨ Teclado ruso» de esta página.</p>
+    </details></div>`);
+  const tec = caja.querySelector('.teclado');
+  const pintar = () => {
+    tec.innerHTML = '';
+    for (const fila of FILAS_TECLADO) {
+      const f = h(`<div class="fila-tec"></div>`);
+      for (const l of fila) { const k = mayus ? l.toUpperCase() : l; f.append(h(`<button type="button" data-k="${k}">${k}</button>`)); }
+      tec.append(f);
+    }
+    tec.append(h(`<div class="fila-tec"><button type="button" data-a="mayus" class="${mayus ? 'on' : ''}">⇧</button><button type="button" data-k=" " class="espacio">espacio</button><button type="button" data-k="-">-</button><button type="button" data-a="borrar">⌫</button></div>`));
+  };
+  pintar();
+  caja.querySelector('[data-t]').onclick = () => { tec.hidden = !tec.hidden; };
+  tec.addEventListener('mousedown', e => e.preventDefault());        // no quitar foco al campo
+  tec.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.a === 'mayus') { mayus = !mayus; pintar(); return; }
+    if (!campo || !campo.isConnected) campo = card.querySelector('.cuerpo input[type=text], .cuerpo textarea');
+    if (!campo) return;
+    const i = campo.selectionStart ?? campo.value.length, j = campo.selectionEnd ?? i;
+    if (b.dataset.a === 'borrar') {
+      const a = i === j ? Math.max(0, i - 1) : i;
+      campo.value = campo.value.slice(0, a) + campo.value.slice(j); campo.setSelectionRange(a, a);
+    } else {
+      campo.value = campo.value.slice(0, i) + b.dataset.k + campo.value.slice(j); campo.setSelectionRange(i + 1, i + 1);
+      if (mayus) { mayus = false; pintar(); }
+    }
+    campo.dispatchEvent(new Event('input', { bubbles: true })); campo.focus();
+  });
+  return caja;
+}
+
 // ---------------------------------------------------------------- panel docente
 const TABLAS = { habilidades: 'habilidades', gramatica: 'gramatica', pronunciacion: 'pronunciacion', vocabulario: 'vocabulario', temas: 'temas',
   escenarios: 'escenarios', tipos_ejercicio: 'tipos_ejercicio', materiales: 'materiales', ejercicios: 'ejercicios' };
 const COLS = {
   habilidades: ['id','nombre','descripcion','como_se_mide','estandar_a1','estandar_a2','estandar_b1','estandar_b2','estandar_c1'],
-  gramatica: ['id','nombre','nivel','descripcion','prerrequisitos','ejemplo'], pronunciacion: ['id','nombre','nivel','descripcion','prerrequisitos','ejemplo'],
-  vocabulario: ['id','lema','traduccion','categoria','nivel','escenarios','temas'], temas: ['id','nombre'],
-  escenarios: ['id','nombre','nivel','temas','orden','prerrequisitos','objetivo_comunicativo','gramatica_foco','pronunciacion_foco'],
+  gramatica: ['id','nombre','nivel','descripcion','prerrequisitos','ejemplo','explicacion'], pronunciacion: ['id','nombre','nivel','descripcion','prerrequisitos','ejemplo','explicacion'],
+  vocabulario: ['id','lema','traduccion','categoria','nivel','escenarios','temas','uso'], temas: ['id','nombre'],
+  escenarios: ['id','nombre','nivel','temas','orden','objetivo_comunicativo','gramatica_foco','pronunciacion_foco'],
   materiales: ['id','titulo','tipo','fuente','inicio','fin','nivel','escenarios','temas','gramatica_presente','transcripcion','licencia','origen','revisado','funcion'],
   tipos_ejercicio: ['id','nombre','descripcion','habilidades_principales','habilidades_secundarias','material','tipos_material_compatibles','generable_ia','equivalente_h5p','nivel_minimo'],
-  ejercicios: ['id','tipo_ejercicio','material','escenario','gramatica_objetivo','vocabulario_objetivo','instrucciones','contenido'],
+  ejercicios: ['id','tipo_ejercicio','material','escenario','gramatica_objetivo','vocabulario_objetivo','instrucciones','contenido','prerrequisitos'],
 };
 const ORDEN_IMPORT = ['habilidades','gramatica','pronunciacion','temas','vocabulario','escenarios','tipos_ejercicio','materiales','ejercicios'];
 
@@ -476,26 +653,63 @@ async function tAlumnos(el) {
   el.append(h(`<p class="sub">Para agregar un alumno: Supabase → Authentication → Users → Add user (marca «Auto Confirm User»). Aparecerá aquí automáticamente y empezará por el principio; la plataforma decide cada tarea según su avance.</p>`));
   if (!al.length) { el.append(h(`<div class="tarjeta">Aún no hay alumnos.</div>`)); return; }
   const lista = h(`<div class="lista"></div>`);
-  al.forEach(p => lista.append(h(`<a class="fila" href="#/docente/alumno-${p.id}"><div class="txt"><b>${esc(p.nombre || '(sin nombre)')}</b><small>nivel ${esc(p.nivel || '')}</small></div></a>`)));
   el.append(lista);
+  for (const p of al) {
+    const f = h(`<a class="fila" href="#/docente/alumno-${p.id}"><div class="txt"><b>${esc(p.nombre || '(sin nombre)')}</b><small>calculando…</small></div></a>`);
+    lista.append(f);
+    Promise.all([api.intentosDe(p.id), api.eventosDe(p.id)]).then(async ([ints, evs]) => {
+      const { m } = await cargarModelo(ints, evs, !!p.orales_zoom);
+      const zoom = [...m.zoomPend].filter(id => !m.zoomOk.has(id)).length;
+      f.querySelector('small').textContent = textoProyeccion(proyeccion(m), { alumno: false }) + (p.orales_zoom ? ` · ${zoom} ${zoom === 1 ? 'ejercicio oral' : 'ejercicios orales'} para Zoom` : '');
+    }).catch(() => { f.querySelector('small').textContent = ''; });
+  }
 }
 
 async function tAlumno(el, uid) {
-  const [ps, ints, gram] = await Promise.all([api.alumnos(), api.intentosDe(uid), api.gramaticaTodas()]);
-  const { m, escenarios } = await cargarModelo(ints);
+  const [ps, ints, gram, evs] = await Promise.all([api.alumnos(), api.intentosDe(uid), api.gramaticaTodas(), api.eventosDe(uid)]);
+  const p0 = ps.find(x => x.id === uid) || {};
+  const { m, escenarios } = await cargarModelo(ints, evs, !!p0.orales_zoom);
   const est = estadoAlumno(m);
   const p = ps.find(x => x.id === uid) || {};
   el.append(h(`<div class="migas"><a href="#/docente/alumnos">← Alumnos</a></div>`));
   const nom = h(`<div class="campo"><label>Nombre visible</label><div style="display:flex;gap:8px"><input type="text" value="${esc(p.nombre || '')}"><button class="btn sec" type="button">Guardar</button></div></div>`);
   nom.querySelector('button').onclick = async () => { await api.renombrar(uid, nom.querySelector('input').value.trim()); nom.querySelector('button').textContent = 'Guardado ✓'; };
   el.append(nom);
+  const zt = h(`<label style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" ${p.orales_zoom ? 'checked' : ''}> Parte oral por Zoom: los ejercicios orales no se le muestran y van a la lista de la clase</label>`);
+  zt.querySelector('input').onchange = async e => { await api.actualizarPerfil(uid, { orales_zoom: e.target.checked }); location.reload(); };
+  el.append(zt);
+  el.append(h(`<p class="meta">${esc(textoProyeccion(proyeccion(m), { alumno: false }))}</p>`));
+  // ejercicios orales pendientes para la clase por Zoom
+  const pendZoom = [...m.zoomPend].filter(id => !m.zoomOk.has(id)).map(id => m.porId.get(id)).filter(Boolean);
+  if (p.orales_zoom || pendZoom.length) {
+    const zc = h(`<div class="tarjeta"><b>Para la próxima clase por Zoom (${pendZoom.length})</b></div>`);
+    if (!pendZoom.length) zc.append(h(`<p class="sub">No hay ejercicios orales pendientes.</p>`));
+    else {
+      const tz = h(`<table style="margin-top:8px"></table>`);
+      pendZoom.forEach(e => tz.append(h(`<tr><td><input type="checkbox" value="${e.id}"></td><td><a href="#/x/${e.id}">${e.id}</a></td><td>${esc(e.instrucciones)}<br><small class="sub">${esc(m.esc.find(s => s.id === e.escenario)?.nombre || '')}</small></td></tr>`)));
+      zc.append(tz);
+      const b = h(`<div class="acciones"><button class="btn sec" type="button">Seleccionar todo</button><button class="btn" type="button">Marcar seleccionados como hechos</button><span class="estado sub"></span></div>`);
+      const [bTodo, bOk] = b.querySelectorAll('button');
+      bTodo.onclick = () => tz.querySelectorAll('input').forEach(i => i.checked = true);
+      bOk.onclick = async () => {
+        const ids = [...tz.querySelectorAll('input:checked')].map(i => i.value);
+        if (!ids.length) return;
+        await api.registrarPara(uid, 'zoom_ok', ids, null);
+        b.querySelector('.estado').textContent = `Marcados ✓ ${ids.length}. Pásame la transcripción de la clase para registrar la producción.`;
+        ids.forEach(id => tz.querySelector(`input[value="${id}"]`).closest('tr').remove());
+      };
+      zc.append(b);
+    }
+    el.append(zc);
+  }
 
   const corr = ints.filter(i => i.puntaje != null);
   const media = corr.length ? Math.round(corr.reduce((s, i) => s + Number(i.puntaje), 0) / corr.length) : null;
   const dias = new Set(ints.map(i => new Date(i.creado_en).toDateString())).size;
-  const actual = est.filas[est.actual];
+  const actual = est.actual ? est.fila[est.actual] : null;
   el.append(h(`<div class="tarjeta"><b>${ints.length}</b> intentos en <b>${dias}</b> ${dias === 1 ? 'día' : 'días'} · promedio <b>${media ?? '—'}${media != null ? ' %' : ''}</b> · último: ${ints[0] ? new Date(ints[0].creado_en).toLocaleString() : '—'}<br>
-    Avance A1: <b>${Math.round(100 * est.nivelGlobal)} %</b> · trabajando en: <b>${esc(actual ? actual.s.id + ' · ' + actual.s.nombre : '—')}</b> (${actual ? actual.hechos + '/' + actual.total : ''})</div>`));
+    ${(() => { const pr = proyeccion(m), d = pr.dom; if (!d) return ''; return `Dominio ${esc(pr.nivel)}: <b>${Math.round(100 * d.frac)} %</b> — palabras activas <b>${d.act}</b>/${d.metaAct} · reconocidas <b>${d.rec}</b>/${d.metaRec} · reglas <b>${d.regOk}</b>/${d.metaReg} · habilidades: ${Object.entries(d.hab).map(([k, r]) => `${k} ${r.n}/5${r.n ? ' (' + Math.round(r.suma / r.n) + ' %)' : ''}`).join(', ')}<br>`; })()}
+    Trabajando en: <b>${esc(actual ? actual.s.id + ' · ' + actual.s.nombre : '—')}</b> (${actual ? actual.hechos + '/' + actual.total : ''})</div>`));
 
   // por habilidad
   el.append(h(`<h2>Por habilidad</h2>`));
@@ -515,6 +729,8 @@ async function tAlumno(el, uid) {
     el.append(tg);
   }
 
+  el.append(bloqueProduccion(uid));
+
   // errores frecuentes
   const errores = [];
   for (const i of corr) for (const d of i.respuesta?.detalle || []) if (!d.ok) errores.push({ ...d, ej: i.ejercicio_id, f: i.creado_en });
@@ -532,6 +748,35 @@ async function tAlumno(el, uid) {
   el.append(t);
 }
 
+// Producción revisada por el docente (ensayos, clases de conversación): lista de IDs V…/G…
+// Formato libre: se toman todos los códigos V1234 / G12; «V1234:0» marca un error.
+function leerProduccion(texto) {
+  const out = new Map();
+  for (const linea of String(texto || '').split(/\n/)) {
+    const mal = /(:|=)\s*0\s*$|✗/.test(linea.trim());       // «:0» al final de la línea o ✗ = producido con error
+    for (const m of linea.matchAll(/\b([VG]\d{2,4})\b/g)) out.set(m[1], mal ? 0 : 1);
+  }
+  return [...out].map(([id, ok]) => `${id}|${ok}|p`);
+}
+function bloqueProduccion(uid, { titulo = 'Registrar producción (ensayo o clase de conversación)', conFecha = true } = {}) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const b = h(`<div class="tarjeta"><b>${titulo}</b>
+    <p class="sub" style="margin:6px 0">Pega la lista de palabras y reglas que el alumno produjo correctamente (códigos V… y G…; agrega «:0» al final de la línea de las que produjo mal). Cuentan para su calendario de repaso.</p>
+    <textarea placeholder="V0643 привет&#10;V0931 я&#10;G07 Меня зовут…&#10;V0330 как:0"></textarea>
+    <div class="acciones">${conFecha ? `<input type="date" value="${hoy}">` : ''}<button class="btn" type="button">Guardar producción</button><span class="estado sub"></span></div></div>`);
+  b.querySelector('button').onclick = async () => {
+    const refs = leerProduccion(b.querySelector('textarea').value), est = b.querySelector('.estado');
+    if (!refs.length) { est.textContent = 'No encontré códigos V… o G… en el texto.'; return; }
+    const f = b.querySelector('input[type=date]')?.value;
+    try {
+      await api.registrarPara(uid, 'produccion', refs, f && f !== hoy ? new Date(f + 'T12:00:00').toISOString() : null);
+      est.textContent = `Guardado ✓ ${refs.filter(r => r.includes('|1|')).length} correctas, ${refs.filter(r => r.includes('|0|')).length} con error.`;
+      b.querySelector('textarea').value = '';
+    } catch (err) { est.textContent = err.message; }
+  };
+  return b;
+}
+
 async function tRevisar(el) {
   const [pend, ps] = await Promise.all([api.pendientes(), api.alumnos()]);
   const nombre = id => ps.find(p => p.id === id)?.nombre || id.slice(0, 8);
@@ -542,12 +787,15 @@ async function tRevisar(el) {
     const card = h(`<div class="tarjeta"><div class="etq">${esc(nombre(i.alumno_id))} · ${new Date(i.creado_en).toLocaleString()} · <a href="#/x/${ej.id}">${ej.id}</a></div>
       <p class="instr">${esc(ej.instrucciones)}</p>${c.criterios ? `<p class="sub">Criterios: ${esc(c.criterios)}</p>` : ''}
       ${i.respuesta?.texto ? `<div class="texto-ru">${esc(i.respuesta.texto)}</div>` : ''}<div class="aud"></div>
-      <div class="campo"><label>Comentario para el alumno</label><textarea></textarea></div>
+      <div class="campo"><label>Comentario para el alumno</label><textarea class="fb"></textarea></div>
+      <div class="campo"><label>Producción correcta para el calendario (opcional: códigos V… y G…, «:0» = error)</label><textarea class="prod" style="min-height:70px"></textarea></div>
       <div class="acciones"><input type="number" min="0" max="100" placeholder="Puntaje 0–100" style="width:150px"><button class="btn" type="button">Guardar revisión</button></div></div>`);
     if (i.audio_path) { const u = await api.url('grabaciones', i.audio_path); if (u) card.querySelector('.aud').append(h(`<audio controls src="${esc(u)}"></audio>`)); }
     card.querySelector('button').onclick = async () => {
       const pts = card.querySelector('input').value;
-      await api.revisar(i.id, { feedback: card.querySelector('textarea').value, puntaje: pts === '' ? null : Number(pts), correcto: pts === '' ? null : Number(pts) >= 60, estado: 'revisado' });
+      const refs = leerProduccion(card.querySelector('.prod').value);
+      if (refs.length) await api.registrarPara(i.alumno_id, 'produccion', refs, null);
+      await api.revisar(i.id, { feedback: card.querySelector('.fb').value, puntaje: pts === '' ? null : Number(pts), correcto: pts === '' ? null : Number(pts) >= 60, estado: 'revisado' });
       card.replaceWith(h(`<div class="tarjeta exito">Revisión guardada ✓</div>`));
     };
     el.append(card);

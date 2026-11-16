@@ -84,3 +84,21 @@ td,th{padding:8px 6px;border-bottom:1px solid var(--linea);text-align:left;verti
 .migas{font-size:14px;margin-bottom:8px}
 .migas a{text-decoration:none}
 @media (max-width:600px){h1{font-size:23px}.barra{padding:12px 14px}}
+
+.teclado{margin-top:10px;background:#efe9df;border-radius:12px;padding:8px;display:grid;gap:5px;user-select:none}
+.fila-tec{display:flex;gap:4px;justify-content:center}
+.fila-tec button{flex:1 1 0;max-width:46px;min-width:0;height:42px;border:1px solid #d4cdbf;border-radius:7px;background:#fff;font:inherit;font-size:17px;cursor:pointer;padding:0}
+.fila-tec button:active{background:#eef3f8}
+.fila-tec button.on{background:var(--tinta);color:#fff}
+.fila-tec .espacio{max-width:220px;flex:5 1 0;font-size:14px;color:var(--suave)}
+.ayuda-teclado{margin-top:10px;font-size:14.5px}
+.ayuda-teclado p{margin:6px 0}
+.vocab{margin-top:6px}
+.vocab td{padding:7px 6px}
+.vocab .ru{font-size:18px;font-weight:600;white-space:nowrap}
+.vocab .cat{color:var(--suave);font-size:13px}
+.fila small{display:block}
+.meta{background:#eef3f8;color:var(--acento2);border-radius:10px;padding:10px 14px;font-weight:600;margin:4px 0 6px}
+.tabla-regla{margin:8px 0;font-size:15px;background:#fff;border:1px solid var(--linea);border-radius:8px}
+.tabla-regla th{background:#f3eee4;font-weight:600}
+.tabla-regla td,.tabla-regla th{padding:5px 8px}
