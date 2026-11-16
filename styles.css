@@ -102,3 +102,36 @@ td,th{padding:8px 6px;border-bottom:1px solid var(--linea);text-align:left;verti
 .tabla-regla{margin:8px 0;font-size:15px;background:#fff;border:1px solid var(--linea);border-radius:8px}
 .tabla-regla th{background:#f3eee4;font-weight:600}
 .tabla-regla td,.tabla-regla th{padding:5px 8px}
+.cursiva{font-family:"Bad Script",cursive;font-size:32px;line-height:1.3}
+.img-item{max-width:260px;max-height:200px;border-radius:10px;border:1px solid var(--linea);margin:6px 0;background:#fff}
+.img-regla{max-width:100%;max-height:260px;border-radius:10px;margin:8px 0;display:block;background:#fff}
+.tarjetas{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.tarjeta-desc{border:1px solid var(--linea);border-radius:14px;padding:16px;text-align:center;background:#fff}
+.tarjeta-desc .ru{font-size:30px;font-weight:600}
+.tarjeta-desc .tr{color:var(--suave);font-size:18px;margin-bottom:6px}
+.tarjeta-desc .btn{margin-top:10px}
+.tarjeta-desc img{max-width:100%;max-height:160px;border-radius:8px;margin-top:10px}
+.tarjeta-desc .es{font-size:20px;font-weight:600;margin-top:6px}
+.tarjeta-desc.ok{border-color:var(--ok);background:#f2faf5}.tarjeta-desc.mal{border-color:var(--pend);background:#fdf8ee}
+.trazos{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.trazo canvas{width:100%;max-width:300px;aspect-ratio:300/190;border:2px dashed #d4cdbf;border-radius:12px;background:#fff;touch-action:none}
+.trazo.ok canvas{border-color:var(--ok)}.trazo.mal canvas{border-color:var(--mal)}
+.tarjeta-desc .acciones{justify-content:center;gap:8px}
+.tarjeta-desc .acciones .btn{margin-top:0;padding:8px 12px}
+[hidden]{display:none !important}
+
+.material video{max-width:100%;border-radius:10px;background:#000}
+.nota-video{font-size:.9rem;color:#555;margin:.3rem 0 0;padding:.4rem .6rem;border-left:3px solid #c33;background:#fff7f5;white-space:pre-line}
+.marca{white-space:nowrap}
+@media (max-width:560px){.barra{padding:10px 14px;flex-wrap:wrap}.barra nav{font-size:.92rem}}
+
+.voz{border:0;background:none;cursor:pointer;font-size:1.05rem;padding:2px 4px;border-radius:8px;vertical-align:middle}
+.voz:hover{background:#efe9dc}
+.racha{display:inline-block;margin:4px 0 10px;padding:6px 14px;border-radius:999px;background:#fff1dd;color:#8a4b00;font-weight:500}
+.racha.pend{background:#f1ede4;color:var(--suave)}
+.confeti{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:60}
+.felicidades{position:fixed;inset:0;background:rgba(31,35,40,.55);z-index:50;display:flex;align-items:center;justify-content:center;padding:18px}
+.felicidades .caja{background:var(--papel);border-radius:22px;padding:30px 26px;max-width:520px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.felicidades .copa{font-size:72px;line-height:1}
+.felicidades h1{font-size:2.2rem;margin:.2em 0;color:var(--acento)}
+.felicidades .grande{font-size:1.3rem}

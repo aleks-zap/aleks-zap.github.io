@@ -4,8 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ruso desde cero</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#b4372f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ruso">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Bad+Script&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,5 +22,6 @@
 </header>
 <main id="app"><p class="cargando">Cargando…</p></main>
 <script type="module" src="app.js"></script>
+<script>if ('serviceWorker' in navigator && !location.search.includes('demo')) navigator.serviceWorker.register('sw.js').catch(() => {});</script>
 </body>
 </html>

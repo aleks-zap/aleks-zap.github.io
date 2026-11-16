@@ -84,7 +84,7 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
   const porId = new Map(ejs.map(e => [e.id, e]));
   // lo que el alumno ya conoce: lo presentado + lo que exigían los ejercicios que ya hizo
   const conocidos = new Set(eventos.filter(v => v.tipo === 'intro').map(v => v.ref));
-  for (const id of porEj.keys()) { const e = porId.get(id); if (e) { e.reqReglas.forEach(x => conocidos.add(x)); e.reqV.forEach(x => conocidos.add(x)); } }
+  for (const id of porEj.keys()) { const e = porId.get(id); if (e) { e.reqReglas.forEach(x => conocidos.add(x)); e.reqV.forEach(x => conocidos.add(x)); (e.ensena || []).forEach(x => conocidos.add(x)); } }
   const elegidos = eventos.filter(v => v.tipo === 'escenario').sort((a, b) => new Date(a.creado_en) - new Date(b.creado_en)).map(v => v.ref);
   const esc = escenarios.filter(s => ejs.some(e => e.escenario === s.id)).sort((a, b) => (a.orden ?? 999) - (b.orden ?? 999));
   // ejercicios orales que se hacen en la clase por Zoom (pendientes o ya hechos)
@@ -114,19 +114,20 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
 }
 
 // ---------- repetición espaciada ----------
-const normW = s => String(s ?? '').toLowerCase().replace(/ё/g, 'е');
+const normW = s => String(s ?? '').toLowerCase().replace(/\u0301/g, '').replace(/ё/g, 'е');
 function idsEnTexto(ctx, texto, permitidos) {
   const out = [], t = normW(texto);
   if (!t) return out;
-  for (const [frase, id] of Object.entries(ctx.formas.m || {})) if (permitidos.has(id) && t.includes(frase)) out.push(id);
+  const ok = id => !permitidos || permitidos.has(id);
+  for (const [frase, id] of Object.entries(ctx.formas.m || {})) if (ok(id) && t.includes(frase)) out.push(id);
   for (const w of t.match(/[а-я]+(?:-[а-я]+)*/g) || []) {
     let c = ctx.formas.f[w]; if (!c) continue;
     if (!Array.isArray(c)) c = [c];
-    const id = c.find(x => permitidos.has(x)); if (id) out.push(id);
+    const id = c.find(x => ok(x)); if (id) out.push(id);
   }
   return out;
 }
-const AUTOCORREGIBLE = new Set(['items', 'match', 'order', 'clasificar', 'conjunto']);
+const AUTOCORREGIBLE = new Set(['items', 'match', 'order', 'clasificar', 'conjunto', 'descubrir', 'trazo']);
 function contenidoDe(e) { try { return typeof e.contenido === 'string' ? JSON.parse(e.contenido) : (e.contenido || {}); } catch { return {}; } }
 // palabras que un ejercicio hace practicar: focoV (reconocer o producir) y focoP (producir escribiendo)
 function focoEjercicio(ctx, e) {
@@ -138,11 +139,15 @@ function focoEjercicio(ctx, e) {
   }
   for (const p of c.pairs || []) ver.push(p[0]);
   ver.push(...(c.tiles || []), ...Object.values(c.categorias || {}).flat());
+  // tarjetas para descubrir: enseñan sus palabras (no son prerrequisito) y se practican como reconocimiento
+  const ensena = tipo === 'descubrir' ? [...new Set((c.tarjetas || []).flatMap(t => idsEnTexto(ctx, t.ru, null)))] : [];
+  ver.push(...(c.tarjetas || []).map(t => t.ru));
   if (tipo === 'conjunto') prod.push(...(c.answers || []).map(a => Array.isArray(a) ? a[0] : a));
   const focoP = new Set(prod.flatMap(t => idsEnTexto(ctx, t, perm)));
-  const focoV = new Set([...ver.flatMap(t => idsEnTexto(ctx, t, perm)), ...focoP]);
+  const permV = new Set([...perm, ...ensena]);
+  const focoV = new Set([...ver.flatMap(t => idsEnTexto(ctx, t, permV)), ...focoP]);
   const n = (c.items || c.pairs || c.tiles || c.answers || []).length || Object.values(c.categorias || {}).flat().length;
-  return { tipoC: tipo, autoc: AUTOCORREGIBLE.has(tipo), focoV, focoP, nItems: n };
+  return { tipoC: tipo, autoc: AUTOCORREGIBLE.has(tipo), focoV, focoP, nItems: n || (c.tarjetas || c.elementos || []).length, ensena };
 }
 // estado de memoria por palabra y regla: { reps, due }
 function memoria(m, hasta = Infinity) {
@@ -155,7 +160,7 @@ function memoria(m, hasta = Infinity) {
     const e = m.porId.get(i.ejercicio_id); if (!e) continue;
     const t = Date.parse(i.creado_en);
     if (i.puntaje != null) for (const g of e.reqG) evs.push({ id: g, t, ok: Number(i.puntaje) >= APROBADO, prod: true });
-    const perm = new Set(e.reqV);
+    const perm = new Set([...e.reqV, ...(e.ensena || [])]);
     for (const d of i.respuesta?.detalle || []) {
       for (const id of idsEnTexto(m, d.c, perm)) evs.push({ id, t, ok: !!d.ok, prod: !!d.p });
       for (const id of idsEnTexto(m, d.q, perm)) evs.push({ id, t, ok: !!d.ok, prod: false });

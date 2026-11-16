@@ -132,6 +132,7 @@ function rutasMedio(m) {
     return [['', `audio/${m.id}.mp3`]];
   }
   if (m.tipo === 'imagen') return [['', `img/${m.id}.jpg`]];
+  if (m.tipo === 'video') return [['', `video/${m.id}.mp4`]];
   return [];
 }
 async function bloqueMaterial(m, { mostrarTexto = true } = {}) {
@@ -145,6 +146,10 @@ async function bloqueMaterial(m, { mostrarTexto = true } = {}) {
   } else if (m.tipo === 'imagen') {
     const u = await api.url('materiales', `img/${m.id}.jpg`);
     div.append(u ? h(`<img loading="lazy" alt="${esc(m.titulo)}" src="${esc(u)}">`) : h(`<p class="error">Imagen no disponible</p>`));
+  } else if (m.tipo === 'video') {
+    const u = await api.url('materiales', `video/${m.id}.mp4`);
+    div.append(u ? h(`<video controls playsinline preload="metadata" src="${esc(u)}"></video>`) : h(`<p class="error">Video no disponible</p>`));
+    if (m.transcripcion) div.append(h(`<details><summary>Ver transcripción</summary><div class="texto-ru">${esc(m.transcripcion)}</div></details>`));
   } else if (m.tipo === 'texto' && mostrarTexto) {
     div.append(h(`<div><div class="etq">${esc(m.titulo)}</div><div class="texto-ru">${esc(m.transcripcion)}</div></div>`));
   }
@@ -182,7 +187,8 @@ function rItems(c) {
   if (c.texto) el.append(h(`<div class="texto-ru">${esc(c.texto)}</div>`));
   if (c.banco) el.append(h(`<div class="banco">${barajar(c.banco).map(b => `<span>${esc(b)}</span>`).join('')}</div>`));
   const filas = c.items.map((it, i) => {
-    const f = h(`<div class="item"><div class="q">${esc(it.q)}</div></div>`);
+    const f = h(`<div class="item"><div class="q${it.fuente === 'cursiva' ? ' cursiva' : ''}">${esc(it.q)}</div></div>`);
+    if (it.img && it.imgAntes) f.querySelector('.q').insertAdjacentHTML('afterbegin', `<img class="img-item" data-mat="${esc(it.img)}" alt=""><br>`);
     if (it.tipo === 'choice') {
       const ops = h(`<div class="opciones"></div>`);
       barajar(it.options).forEach(o => ops.append(h(`<label><input type="radio" name="o${i}" value="${esc(o)}"> <span>${esc(o)}</span></label>`)));
@@ -203,6 +209,7 @@ function rItems(c) {
         const correcta = it.tipo === 'choice' ? it.answer : (it.answers || [])[0];
         det.push({ q: it.q, r: v, c: correcta, ok, p: it.tipo !== 'choice' });
         f.append(h(`<div class="marca-res ${ok ? 'ok' : 'mal'}">${ok ? '✓ Correcto' : `✗ Respuesta: <span class="correcta">${esc(correcta)}</span>`}</div>`));
+        if (it.img && !it.imgAntes && !f.querySelector('.img-item')) f.append(h(`<img class="img-item" data-mat="${esc(it.img)}" alt="">`));
       });
       return { total: c.items.length, bien, respuesta: resp, detalle: det };
     }
@@ -295,6 +302,128 @@ function rAbierta(c, ej) {
     return { abierta: true, respuesta: { texto: ta.value }, audio };
   } };
 }
+// imágenes de materiales dentro de ejercicios y explicaciones: <img data-mat="M123">
+async function resolverImgs(el) {
+  for (const im of el.querySelectorAll('img[data-mat]:not([src])')) {
+    const u = await api.url('materiales', `img/${im.dataset.mat}.jpg`);
+    if (u) im.src = u; else im.replaceWith(h(`<span class="sub">(imagen ${esc(im.dataset.mat)} no disponible)</span>`));
+  }
+}
+// Tarjetas para descubrir: leer la palabra, pensar, voltear (imagen + traducción) y autoevaluarse
+
+// ---------- Voz: lee palabras rusas con la voz del dispositivo (sin archivos de audio)
+const HAY_VOZ = 'speechSynthesis' in window;
+function hablar(texto) {
+  if (!HAY_VOZ) return;
+  const u = new SpeechSynthesisUtterance(String(texto).replace(/́/g, ''));
+  u.lang = 'ru-RU'; u.rate = 0.85;
+  const v = speechSynthesis.getVoices().find(x => /^ru/i.test(x.lang)); if (v) u.voice = v;
+  speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+function botonVoz(texto) {
+  if (!HAY_VOZ) return document.createTextNode('');
+  const b = h(`<button class="voz" type="button" title="Escuchar" aria-label="Escuchar">🔊</button>`);
+  b.onclick = e => { e.stopPropagation(); hablar(texto); }; return b;
+}
+// ---------- Racha: días seguidos con actividad (cuenta hoy o, si hoy aún no hay, hasta ayer)
+function racha(intentos, eventos) {
+  const dia = t => { const d = new Date(t); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+  const dias = new Set([...intentos, ...eventos.filter(e => ['tarjeta', 'intro'].includes(e.tipo))].map(x => dia(x.creado_en)));
+  const d = new Date(); let n = 0; const hoy = dias.has(dia(d));
+  if (!hoy) d.setDate(d.getDate() - 1);
+  while (dias.has(dia(d))) { n++; d.setDate(d.getDate() - 1); }
+  return { n, hoy };
+}
+// ---------- Felicitación al completar un nivel
+function confeti(ms = 6000) {
+  const cv = h(`<canvas class="confeti"></canvas>`); document.body.append(cv);
+  const cx = cv.getContext('2d'); cv.width = innerWidth; cv.height = innerHeight;
+  const col = ['#b4372f', '#2f5d8a', '#e2a400', '#2e7d4f', '#8e44ad', '#ff7a59'];
+  const ps = Array.from({ length: 180 }, () => ({ x: Math.random() * cv.width, y: -Math.random() * cv.height, r: 5 + Math.random() * 7, c: col[Math.random() * col.length | 0], vy: 2 + Math.random() * 4, vx: -1.5 + Math.random() * 3, a: Math.random() * 6, va: -.2 + Math.random() * .4 }));
+  const t0 = performance.now();
+  (function paso(t) {
+    cx.clearRect(0, 0, cv.width, cv.height);
+    for (const p of ps) { p.x += p.vx; p.y += p.vy; p.a += p.va; if (p.y > cv.height + 20 && t - t0 < ms - 1500) { p.y = -20; p.x = Math.random() * cv.width; }
+      cx.save(); cx.translate(p.x, p.y); cx.rotate(p.a); cx.fillStyle = p.c; cx.fillRect(-p.r / 2, -p.r / 4, p.r, p.r / 2); cx.restore(); }
+    if (t - t0 < ms) requestAnimationFrame(paso); else cv.remove();
+  })(t0);
+}
+function celebrarNivel(nivel, eventos) {
+  const clave = `nivel_celebrado_${sesion?.user?.id || 'demo'}`;
+  if (!nivel || localStorage.getItem(clave) === nivel) return;
+  try { localStorage.setItem(clave, nivel); } catch (e) {}
+  const pedido = eventos.some(e => e.tipo === 'certificado' && e.ref === nivel);
+  const o = h(`<div class="felicidades"><div class="caja"><div class="copa">🏆</div><h1>¡Felicidades!</h1>
+    <p class="grande">Alcanzaste el nivel <b>${esc(nivel)}</b> de ruso.</p><p>Поздравляем! Dominas el vocabulario, la gramática y las habilidades de este nivel.</p>
+    ${pedido ? '' : `<p class="instr">¿Quieres recibir tu certificado de nivel ${esc(nivel)}?</p><p class="sub">El certificado se entrega después de aprobar un examen de suficiencia. Tu profesora te escribirá con los detalles.</p>`}
+    <div class="acciones" style="justify-content:center">${pedido ? '' : `<button class="btn" data-c="1" type="button">Sí, quiero mi certificado</button>`}<button class="btn sec" data-c="0" type="button">${pedido ? 'Seguir aprendiendo' : 'Ahora no'}</button></div><p class="error" hidden></p></div></div>`);
+  document.body.append(o); confeti();
+  o.querySelectorAll('[data-c]').forEach(b => b.onclick = async () => {
+    if (b.dataset.c === '1') {
+      try { await api.registrar('certificado', [nivel]); o.querySelector('.caja').innerHTML = `<div class="copa">📜</div><h1>¡Listo!</h1><p>Registramos tu solicitud de certificado ${esc(nivel)}. Tu profesora te escribirá pronto.</p><div class="acciones" style="justify-content:center"><button class="btn" type="button">Seguir aprendiendo</button></div>`; o.querySelector('button').onclick = () => o.remove(); }
+      catch (err) { const e = o.querySelector('.error'); e.hidden = false; e.textContent = 'No se pudo registrar la solicitud. Avisa a tu profesora.'; }
+    } else o.remove();
+  });
+}
+function rDescubrir(c) {
+  const el = h(`<div class="tarjetas"></div>`); const res = c.tarjetas.map(() => null);
+  c.tarjetas.forEach((t, i) => {
+    const f = h(`<div class="tarjeta-desc"><div class="ru">${esc(t.ru)}</div>${t.tr ? `<div class="tr">${esc(t.tr)}</div>` : ''}
+      <button class="btn sec" type="button">Ver significado</button>
+      <div class="dorso" hidden>${t.img ? `<img data-mat="${esc(t.img)}" alt="">` : ''}<div class="es">${esc(t.es)}</div>${t.nota ? `<div class="sub">${esc(t.nota)}</div>` : ''}
+        <div class="acciones" style="margin-top:8px"><button class="btn" type="button" data-s="1">Lo sabía</button><button class="btn sec" type="button" data-s="0">No lo sabía</button></div></div></div>`);
+    f.querySelector('button').onclick = async e => { e.target.style.display = 'none'; f.querySelector('.dorso').hidden = false; await resolverImgs(f); };
+    f.querySelector('.ru').append(' ', botonVoz(t.ru));
+    f.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { res[i] = b.dataset.s === '1'; f.classList.remove('ok', 'mal'); f.classList.add(res[i] ? 'ok' : 'mal'); });
+    el.append(f);
+  });
+  return { el, corregir() {
+    if (res.some(x => x === null)) throw new Error('Voltea todas las tarjetas y marca si sabías cada palabra.');
+    const det = c.tarjetas.map((t, i) => ({ q: t.ru, r: res[i] ? 'sabía' : 'no sabía', c: t.ru, ok: res[i], p: false }));
+    return { total: det.length, bien: det.filter(d => d.ok).length, respuesta: res, detalle: det };
+  } };
+}
+// Seguir el trazo: el alumno repasa con el dedo o el mouse una letra cursiva (fuente Bad Script)
+function rTrazo(c) {
+  const el = h(`<div class="trazos"></div>`); const W = 300, H = 190, FUENTE = '130px "Bad Script"';
+  const lienzos = c.elementos.map(txt => {
+    const f = h(`<div class="trazo"><canvas width="${W}" height="${H}"></canvas><div class="acciones" style="margin-top:6px"><button class="btn sec" type="button">Borrar</button><span class="marca-res"></span></div></div>`);
+    const cv = f.querySelector('canvas'), cx = cv.getContext('2d'); let trazos = [], act = null;
+    const dibujar = () => {
+      cx.clearRect(0, 0, W, H); cx.font = FUENTE; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillStyle = '#d9d2c4'; cx.fillText(txt, W / 2, H / 2 + 5);
+      cx.strokeStyle = '#2f5d8a'; cx.lineWidth = 9; cx.lineCap = cx.lineJoin = 'round';
+      for (const t of trazos) { cx.beginPath(); t.forEach(([x, y], k) => k ? cx.lineTo(x, y) : cx.moveTo(x, y)); if (t.length === 1) cx.lineTo(t[0][0] + .1, t[0][1]); cx.stroke(); }
+    };
+    const pos = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; };
+    cv.onpointerdown = e => { cv.setPointerCapture(e.pointerId); act = [pos(e)]; trazos.push(act); dibujar(); };
+    cv.onpointermove = e => { if (act) { act.push(pos(e)); dibujar(); } };
+    cv.onpointerup = cv.onpointercancel = () => { act = null; };
+    f.querySelector('button').onclick = () => { trazos = []; f.querySelector('.marca-res').textContent = ''; f.classList.remove('ok', 'mal'); dibujar(); };
+    document.fonts.load(FUENTE).then(dibujar, dibujar); dibujar();
+    el.append(f);
+    // evaluación: cuánto del modelo cubrió el trazo y cuánto del trazo cae sobre el modelo
+    const evaluar = () => {
+      const mk = () => { const o = document.createElement('canvas'); o.width = W; o.height = H; const x = o.getContext('2d'); x.font = FUENTE; x.textAlign = 'center'; x.textBaseline = 'middle'; return [o, x]; };
+      const pinta = (x, ancho) => { x.lineWidth = ancho; x.lineCap = x.lineJoin = 'round'; x.strokeStyle = '#000'; for (const t of trazos) { x.beginPath(); t.forEach(([a, b], k) => k ? x.lineTo(a, b) : x.moveTo(a, b)); if (t.length === 1) x.lineTo(t[0][0] + .1, t[0][1]); x.stroke(); } };
+      const [, mod] = mk(); mod.fillText(txt, W / 2, H / 2 + 5);
+      const [, banda] = mk(); banda.lineWidth = 22; banda.lineJoin = 'round'; banda.strokeText(txt, W / 2, H / 2 + 5); banda.fillText(txt, W / 2, H / 2 + 5);
+      const [, usu] = mk(); pinta(usu, 9); const [, usuAncho] = mk(); pinta(usuAncho, 28);
+      const A = mod.getImageData(0, 0, W, H).data, B = banda.getImageData(0, 0, W, H).data, U = usu.getImageData(0, 0, W, H).data, UA = usuAncho.getImageData(0, 0, W, H).data;
+      let m = 0, cub = 0, u = 0, dentro = 0;
+      for (let i = 3; i < A.length; i += 4) { if (A[i] > 100) { m++; if (UA[i] > 100) cub++; } if (U[i] > 100) { u++; if (B[i] > 100) dentro++; } }
+      const cobertura = m ? cub / m : 0, precision = u ? dentro / u : 0, ok = cobertura >= 0.7 && precision >= 0.75;
+      f.classList.remove('ok', 'mal'); f.classList.add(ok ? 'ok' : 'mal');
+      f.querySelector('.marca-res').textContent = ok ? '✓ Bien' : (cobertura < 0.7 ? '✗ Falta recorrer partes de la letra' : '✗ El trazo se sale del modelo');
+      return ok;
+    };
+    return { txt, evaluar };
+  });
+  return { el, corregir() {
+    const det = lienzos.map(l => ({ q: 'trazo ' + l.txt, r: '', c: '', ok: l.evaluar() }));
+    return { total: det.length, bien: det.filter(d => d.ok).length, respuesta: det.map(d => d.ok), detalle: det };
+  } };
+}
+
 async function renderizar(ej) {
   const c = typeof ej.contenido === 'string' ? JSON.parse(ej.contenido) : ej.contenido;
   switch (c.tipo) {
@@ -304,6 +433,8 @@ async function renderizar(ej) {
     case 'conjunto': return rConjunto(c);
     case 'repetir': case 'leer': return rOral(c, ej);
     case 'abierta': return rAbierta(c, ej);
+    case 'descubrir': return rDescubrir(c);
+    case 'trazo': return rTrazo(c);
     default: return rItems(c);
   }
 }
@@ -383,6 +514,9 @@ async function vInicio() {
   $app.innerHTML = `<h1>Привет${perfil?.nombre ? ', ' + esc(perfil.nombre) : ''}!</h1>
     <p class="sub">${hoy ? `Hoy llevas ${hoy} ${hoy === 1 ? 'tarea' : 'tareas'}. ¡Sigue así!` : 'Tu plan avanza paso a paso según lo que ya sabes.'}</p>
     <div class="meta">${esc(textoProyeccion(proyeccion(m)))}</div>`;
+  const rc = racha(intentos, eventos);
+  if (rc.n) $app.querySelector('.sub').after(h(`<div class="racha ${rc.hoy ? '' : 'pend'}">🔥 <b>${rc.n}</b> ${rc.n === 1 ? 'día seguido' : 'días seguidos'}${rc.hoy ? '' : ' · haz una tarea hoy para no perder tu racha'}</div>`));
+  celebrarNivel(proyeccion(m).logrado || (location.search.includes('demo') && new URLSearchParams(location.search).get('celebrar')), eventos);
   const card = h(`<div class="tarjeta"></div>`);
   const filaAct = est.actual ? est.fila[est.actual] : null;
   if (filaAct && !['elegir', 'fin', 'repasoDia', 'tarjetas', 'descanso'].includes(sig.tipo)) card.append(h(`<div class="etq">${esc(filaAct.s.nombre)} · ${filaAct.hechos} de ${filaAct.total}</div>`));
@@ -404,6 +538,7 @@ async function vInicio() {
     const r = sig.regla, esP = /^P/.test(r.id);
     card.append(h(`<div class="etq">${esP ? 'Pronunciación nueva' : 'Regla nueva'}${sig.pendientes > 1 ? ` · quedan ${sig.pendientes} antes del ejercicio` : ''}</div>`));
     card.append(h(`<div class="regla" style="margin-top:6px"><b style="font-size:18px">${esc(r.nombre)}</b>${r.explicacion ? explicacionHtml(r.explicacion) : `<p style="margin:8px 0">${esc(r.descripcion || '')}</p>`}${r.ejemplo ? `<div class="texto-ru">${esc(r.ejemplo)}</div>` : ''}</div>`));
+    resolverImgs(card);
     const b = h(`<div class="acciones"><button class="btn" type="button">Entendido, continuar →</button></div>`);
     b.querySelector('button').onclick = async e => { e.target.disabled = true; await api.registrar('intro', [r.id]); vInicio(); };
     card.append(b);
@@ -505,6 +640,7 @@ async function vEjercicio(id) {
   const media = card.querySelector('.media');
   const esLectura = ['leer'].includes(c.tipo);
   for (const m of mats) if (!(esLectura && m.tipo === 'texto')) media.append(await bloqueMaterial(m));
+  if (c.nota) media.append(h(`<p class="nota-video">${esc(c.nota)}</p>`));
 
   let ejR = ej;
   if (c.n && Array.isArray(c.items) && perfil?.rol !== 'docente') {      // ejercicio-banco: solo las preguntas sorteadas
@@ -516,9 +652,10 @@ async function vEjercicio(id) {
     if (items.length) ejR = { ...ej, contenido: { ...c, items } };
   } else if (c.n && perfil?.rol === 'docente') card.querySelector('.instr').insertAdjacentHTML('afterend', `<p class="sub">Banco de ${c.items.length} preguntas${c.grupo ? ` (grupo ${esc(c.grupo)})` : ''}; al alumno se le muestran ${c.n}.</p>`);
   const r = await renderizar(ejR);
+  setTimeout(() => resolverImgs(card), 0);
   card.querySelector('.cuerpo').append(r.el);
   if (card.querySelector('.cuerpo input[type=text], .cuerpo textarea')) card.querySelector('.cuerpo').after(tecladoRuso(card));
-  const acc = card.querySelector('.acciones'), res = card.querySelector('.res');
+  const acc = card.querySelector(':scope > .acciones'), res = card.querySelector(':scope > .res');
   const bEnviar = h(`<button class="btn" type="button">${r.abierta ? 'Enviar' : 'Comprobar'}</button>`);
   acc.append(bEnviar);
   bEnviar.onclick = async () => {
@@ -539,6 +676,7 @@ async function vEjercicio(id) {
           for (const g of reglas) res.append(h(`<div class="regla"><b>Repasa: ${esc(g.nombre)}</b>${esc(g.descripcion || '')}${g.ejemplo ? `<div class="ej">${esc(g.ejemplo)}</div>` : ''}</div>`));
         }
       }
+      resolverImgs(card);
       acc.innerHTML = '';
       const bOtra = h(`<button class="btn sec" type="button">Intentar de nuevo</button>`); bOtra.onclick = () => vEjercicio(id); acc.append(bOtra);
       acc.append(h(`<a class="btn" href="#/">Siguiente tarea →</a>`));
@@ -552,6 +690,8 @@ function explicacionHtml(txt) {
   const cerrar = () => { if (tabla.length) { out.push(`<table class="tabla-regla">${tabla.map((f, i) => `<tr>${f.map(c => i === 0 ? `<th>${esc(c)}</th>` : `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table>`); tabla = []; } };
   for (const l of String(txt).split('\n')) {
     const t = l.trim();
+    const mImg = t.match(/^\[img:(M\d+)\]$/);
+    if (mImg) { cerrar(); out.push(`<img class="img-regla" data-mat="${mImg[1]}" alt="">`); continue; }
     if (t.startsWith('|')) { const celdas = t.replace(/^\||\|$/g, '').split('|').map(c => c.trim()); if (!celdas.every(c => /^-+$/.test(c))) tabla.push(celdas); continue; }
     cerrar(); if (t) out.push(`<p style="margin:8px 0">${esc(t)}</p>`);
   }
@@ -570,6 +710,7 @@ function tarjetasRepaso(items, vocab) {
       const otras = barajar(todas.filter(x => x.id !== id && x.traduccion && x.traduccion !== v.traduccion)).slice(0, 3).map(x => x.traduccion);
       f = h(`<div class="item"><div class="q" style="font-size:18px;font-weight:600">${esc(v.lema)}</div><select><option value="">— significado —</option>${barajar([v.traduccion, ...otras]).map(o => `<option>${esc(o)}</option>`).join('')}</select></div>`);
     }
+    if (modo !== 'p') f.querySelector('.q').append(' ', botonVoz(v.lema));
     el.append(f); return { f, id, modo, v };
   });
   if (items.some(i => i.modo === 'p')) el.append(tecladoRuso(el));
@@ -581,6 +722,7 @@ function tarjetasRepaso(items, vocab) {
       const ok = modo === 'p' ? igual(r, [v.lema]) : r === v.traduccion;
       f.classList.add(ok ? 'ok' : 'mal');
       f.append(h(`<div class="marca-res ${ok ? 'ok' : 'mal'}">${ok ? '✓' : `✗ <span class="correcta">${esc(modo === 'p' ? v.lema : v.traduccion)}</span>`}</div>`));
+      if (modo === 'p') f.querySelector('.marca-res').append(' ', botonVoz(v.lema));
       return `${id}|${ok ? 1 : 0}|${modo}`;
     });
     try { await api.registrar('tarjeta', refs); } catch (err) { acc.append(h(`<p class="error">${esc(err.message)}</p>`)); e.target.disabled = false; return; }
@@ -706,6 +848,8 @@ async function tAlumno(el, uid) {
   };
   el.append(rz);
   el.append(h(`<p class="meta">${esc(textoProyeccion(proyeccion(m), { alumno: false }))}</p>`));
+  const certs = [...new Set(evs.filter(e => e.tipo === 'certificado').map(e => e.ref))];
+  if (certs.length) el.append(h(`<p class="meta">📜 Pidió certificado de nivel: <b>${esc(certs.join(', '))}</b></p>`));
   // ejercicios orales pendientes para la clase por Zoom
   const pendZoom = [...m.zoomPend].filter(id => !m.zoomOk.has(id)).map(id => m.porId.get(id)).filter(Boolean);
   if (p.orales_zoom || pendZoom.length) {
@@ -834,8 +978,8 @@ async function tContenido(el) {
     <p class="sub">En Google Sheets: Archivo → Descargar → Microsoft Excel (.xlsx). Sube ese archivo aquí. Puedes repetirlo cada vez que cambies la hoja: actualiza filas existentes y agrega las nuevas.</p>
     <input type="file" accept=".xlsx" id="fx"> <button class="btn" id="bx" type="button">Importar</button></div>`));
   el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">2 · Subir audios e imágenes</h2>
-    <p class="sub">Selecciona todos los archivos de las carpetas <b>audio</b> e <b>img</b> (nombres tipo M003.mp3, M004.jpg). Se guardan en Supabase y los alumnos los ven sin cuenta de Google.</p>
-    <input type="file" multiple accept=".mp3,.jpg,.jpeg,.png,.webp" id="fm"> <button class="btn" id="bm" type="button">Subir</button></div>`));
+    <p class="sub">Selecciona todos los archivos de las carpetas <b>audio</b>, <b>img</b> y <b>video</b> (nombres tipo M003.mp3, M004.jpg, M455.mp4). Se guardan en Supabase y los alumnos los ven sin cuenta de Google.</p>
+    <input type="file" multiple accept=".mp3,.jpg,.jpeg,.png,.webp,.mp4" id="fm"> <button class="btn" id="bm" type="button">Subir</button></div>`));
   const log = h(`<div class="log" hidden></div>`); el.append(log);
   const out = s => { log.hidden = false; log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
 
@@ -870,7 +1014,7 @@ async function tContenido(el) {
     const files = [...el.querySelector('#fm').files]; if (!files.length) return out('Elige los archivos primero.');
     let ok = 0, err = 0;
     for (const f of files) {
-      const carpeta = /\.mp3$/i.test(f.name) ? 'audio' : 'img';
+      const carpeta = /\.mp3$/i.test(f.name) ? 'audio' : /\.mp4$/i.test(f.name) ? 'video' : 'img';
       try { await api.subirMedio(f, `${carpeta}/${f.name}`); ok++; if (ok % 10 === 0) out(`… ${ok} de ${files.length}`); }
       catch (e) { err++; out(`✗ ${f.name}: ${e.message}`); }
     }
