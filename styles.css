@@ -135,3 +135,38 @@ td,th{padding:8px 6px;border-bottom:1px solid var(--linea);text-align:left;verti
 .felicidades .copa{font-size:72px;line-height:1}
 .felicidades h1{font-size:2.2rem;margin:.2em 0;color:var(--acento)}
 .felicidades .grande{font-size:1.3rem}
+
+.guia ul{padding-left:1.2em}.guia li{margin:.35em 0}
+kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padding:0 5px;background:#fff;font:inherit;font-size:.9em}
+.yt{position:relative;padding-top:56.25%;border-radius:10px;overflow:hidden;background:#000}.yt iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+
+.heroe{padding:28px 0 8px}.heroe h1{font-size:2.3rem;line-height:1.15;margin:0 0 10px}.grande{font-size:1.15rem}
+.ventajas{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:22px 0}.ventajas>div{background:var(--papel);border:1px solid var(--linea);border-radius:14px;padding:14px}.ventajas p{margin:.4em 0 0;color:var(--suave)}
+.planes{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:12px 0 18px}
+.plan{background:var(--papel);border:1px solid var(--linea);border-radius:16px;padding:18px;display:flex;flex-direction:column}.plan.dest{border:2px solid var(--acento)}
+.plan h3{margin:0 0 6px}.precio{font-size:2rem;font-weight:700}.precio span{font-size:1rem;font-weight:400;color:var(--suave)}.plan ul{padding-left:1.1em;flex:1}.plan .btn{text-align:center}
+.btn-mini{background:var(--acento);color:#fff!important;border-radius:999px;padding:4px 12px}
+.reportar{position:fixed;right:12px;bottom:12px;z-index:40;border:1px solid var(--linea);background:var(--papel);border-radius:999px;padding:7px 12px;font:inherit;font-size:.82rem;color:var(--suave);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.reportar:hover{color:var(--tinta)}
+.felicidades textarea{width:100%;min-height:120px}
+.interruptor{display:flex;gap:10px;align-items:center}.interruptor input{width:22px;height:22px}
+.regla.ia{border-left-color:#2f5d8a}
+.examen-cab{position:sticky;top:0;background:var(--fondo);padding:10px 0;z-index:5;display:flex;gap:10px;align-items:center}.reloj{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:600}
+.cam{position:fixed;left:12px;bottom:12px;width:120px;border-radius:10px;z-index:45;border:2px solid var(--acento)}
+.notas{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}.notas label{display:flex;flex-direction:column;font-size:.85rem}.notas input{width:110px}
+.foto-cam{width:120px;border-radius:6px;margin:3px}
+.cert-fila{margin-bottom:10px}
+.certificado{background:#fff;border:6px double #b4372f;border-radius:10px;padding:40px 30px;text-align:center;max-width:760px;margin:10px auto;color:#1f2328}
+.certificado h1{font-size:2rem;margin:.2em 0}.cert-nombre{font-size:1.8rem;font-weight:700;margin:.3em 0}.cert-escuela{letter-spacing:.12em;text-transform:uppercase;color:#b4372f;font-weight:600}.sello{font-size:52px}
+@media print{.barra,.no-imprimir,.reportar{display:none!important}body{background:#fff}.certificado{border-color:#b4372f;margin:0 auto}}
+.tarjeta.hecho{opacity:.6}
+.voz-fila{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+.tabla{width:100%;border-collapse:collapse;margin:8px 0;font-size:15px;background:#fff}
+.tabla th,.tabla td{border:1px solid var(--linea);padding:6px 8px;text-align:left}
+.tabla th{background:#f3eee4;font-weight:600}
+.examen-cab a{text-decoration:none;margin-right:4px}
+.grupo-lex{border-top:1px solid var(--linea);padding-top:8px;margin-top:10px}
+.espacio{margin:10px 0}.espacio-t{display:flex;justify-content:space-between;gap:8px;font-size:15px;margin-bottom:4px}
+.espacio-b{height:12px;background:#eee8dc;border-radius:6px;overflow:hidden}.espacio-b div{height:100%;background:#4c8b5a}
+.espacio-b .alto{background:#d99a2b}.espacio-b .lleno{background:#b4372f}
+.aviso-espacio{border-left:4px solid #d99a2b;background:#fff8ec}

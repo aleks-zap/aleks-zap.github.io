@@ -486,7 +486,7 @@ export function proyeccion(m) {
     actual = n; break;
   }
   if (!d.hayContenido) return { completo: true, logrado, siguiente: actual, frac: 1 };
-  const hechos = new Set(m.intentosOrd.map(i => i.ejercicio_id)).size + m.zoomPend.size;
+  const hechos = new Set(m.intentosOrd.map(i => i.ejercicio_id)).size;   // solo ejercicios hechos (los orales en espera de Zoom no cuentan)
   if (hechos < MIN_EJERCICIOS_PROYECCION) return { nivel: actual, logrado, dias: null, hechos, frac: d.frac, dom: d };
   // ritmo de avance del dominio en los últimos 14 días (incluye el efecto del repaso)
   const todos = [...m.intentosOrd.map(i => Date.parse(i.creado_en)), ...m.eventos.filter(v => ['tarjeta', 'zoom'].includes(v.tipo)).map(v => Date.parse(v.creado_en))];

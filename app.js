@@ -1,4 +1,4 @@
-import { SUPABASE_URL, SUPABASE_KEY, NOMBRE_CURSO } from './config.js';
+import { SUPABASE_URL, SUPABASE_KEY, NOMBRE_CURSO, PLANES } from './config.js';
 import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, resumenPalabras, proyeccion, textoProyeccion, seleccionActiva, sortearPreguntas, itemDeRef, ORALES, HABILIDADES, HABILIDAD } from './motor.js';
 let vocabCache = null, formasCache = null;
 let reglasCache = null;
@@ -35,6 +35,29 @@ async function crearSupabase() {
     async sesion() { return (await sb.auth.getSession()).data.session; },
     async login(email, password) { ok(await sb.auth.signInWithPassword({ email, password })); },
     async logout() { await sb.auth.signOut(); },
+    async registro(nombre, email, password) { return ok(await sb.auth.signUp({ email, password, options: { data: { nombre }, emailRedirectTo: location.origin + location.pathname } })); },
+    async recuperar(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname + '#/nueva-clave' })); },
+    async nuevaClave(password) { ok(await sb.auth.updateUser({ password })); },
+    async reportar(o) { ok(await sb.from('reportes').insert(o)); },
+    async reportes() { return ok(await sb.from('reportes').select('*').order('creado_en', { ascending: false }).limit(200)); },
+    async resolverReporte(id) { ok(await sb.from('reportes').update({ estado: 'resuelto' }).eq('id', id)); },
+    async ajustes() { return ok(await sb.from('ajustes').select('*')); },
+    async espacio() { return ok(await sb.rpc('espacio_usado')); },
+    async guardarAjuste(clave, valor) { ok(await sb.from('ajustes').upsert({ clave, valor })); },
+    async usoIA() { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return ok(await sb.from('uso_ia').select('costo_usd').gte('creado_en', d.toISOString())); },
+    async corregirIA(intento_id) { const r = await sb.functions.invoke('corregir', { body: { intento_id } }); if (r.error) throw r.error; return r.data; },
+    async examenes(todos = false) { let q = sb.from('examenes').select('*').order('iniciado_en', { ascending: false }); if (!todos) q = q.eq('usuario', sesion.user.id); return ok(await q); },
+    async crearExamen(o) { return ok(await sb.from('examenes').insert(o).select().single()); },
+    async actualizarExamen(id, o) { ok(await sb.from('examenes').update(o).eq('id', id)); },
+    async subirFotoExamen(blob, path) { ok(await sb.storage.from('examenes').upload(path, blob, { contentType: 'image/jpeg' })); },
+    async fotosExamen(uid, exId) {
+      const l = ok(await sb.storage.from('examenes').list(`${uid}/${exId}`, { limit: 200, sortBy: { column: 'name', order: 'asc' } }));
+      if (!l.length) return [];
+      const r = ok(await sb.storage.from('examenes').createSignedUrls(l.map(f => `${uid}/${exId}/${f.name}`), 3600));
+      return r.map(x => x.signedUrl).filter(Boolean);
+    },
+    async certificados() { return ok(await sb.from('certificados').select('*').order('emitido_en', { ascending: false })); },
+    async verificar(codigo) { const r = ok(await sb.rpc('verificar_certificado', { p_codigo: codigo })); return r[0] || null; },
     async perfil(uid) { return ok(await sb.from('perfiles').select('*').eq('id', uid).single()); },
     async todosEscenarios() { return ok(await sb.from('escenarios').select('*').order('orden')); },
     async ejerciciosLigeros() { return ok(await sb.from('ejercicios').select('*').order('id')); },
@@ -99,9 +122,19 @@ async function crearDemo() {
   const eventos = JSON.parse(sessionStorage.getItem('demo_eventos') || '[]');
   const by = (t, id) => d[t].find(x => x.id === id);
   return {
-    async sesion() { return { user: { id: 'demo', email: 'demo@demo' } }; },
+    async sesion() { return new URLSearchParams(location.search).get('demo') === 'publico' ? null : { user: { id: 'demo', email: 'demo@demo' } }; },
     async login() {}, async logout() {},
-    async perfil() { return { id: 'demo', nombre: 'Alumno de prueba', rol: new URLSearchParams(location.search).get('demo') === 'docente' ? 'docente' : 'alumno', orales_zoom: new URLSearchParams(location.search).has('zoom') }; },
+    async registro() { return { session: null }; }, async recuperar() {}, async nuevaClave() {},
+    async reportar(o) { console.log('reporte', o); }, async reportes() { return []; }, async resolverReporte() {},
+    async ajustes() { return [{ clave: 'ia_activa', valor: false }, { clave: 'ia_tope_mensual_usd', valor: 5 }]; },
+    async espacio() { return [{ tipo: 'base', nombre: 'base de datos', bytes: 61e6 }, { tipo: 'archivos', nombre: 'materiales', bytes: 640e6, archivos: 352 }, { tipo: 'archivos', nombre: 'grabaciones', bytes: 95e6, archivos: 40 }, { tipo: 'archivos', nombre: 'examenes', bytes: 110e6, archivos: 300 }]; }, async guardarAjuste() {}, async usoIA() { return []; }, async corregirIA() { return {}; },
+    async examenes() { return JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); },
+    async crearExamen(o) { const l = JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); const x = { id: Date.now(), estado: 'en_curso', incidencias: [], iniciado_en: new Date().toISOString(), ...o }; l.unshift(x); sessionStorage.setItem('demo_examenes', JSON.stringify(l)); return x; },
+    async actualizarExamen(id, o) { const l = JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); const x = l.find(e => e.id === id); Object.assign(x, o); sessionStorage.setItem('demo_examenes', JSON.stringify(l)); },
+    async subirFotoExamen() {}, async fotosExamen() { return []; },
+    async certificados() { return [{ codigo: 'RU-A1-DEMO42', nombre: 'Alumno de prueba', nivel: 'A1', emitido_en: '2026-11-17', notas: { lexico: 88, lectura: 80, audicion: 75, escritura: 70, oral: 82 } }]; },
+    async verificar(c) { return c.trim().toUpperCase() === 'RU-A1-DEMO42' ? { nombre: 'Alumno de prueba', nivel: 'A1', emitido_en: '2026-11-17' } : null; },
+    async perfil() { return { id: 'demo', plan: new URLSearchParams(location.search).get('plan') || 'completo', nombre: 'Alumno de prueba', rol: new URLSearchParams(location.search).get('demo') === 'docente' ? 'docente' : 'alumno', orales_zoom: new URLSearchParams(location.search).has('zoom') }; },
     async todosEscenarios() { return d.escenarios; },
     async ejerciciosLigeros() { return d.ejercicios; },
     async reglas() { return d.reglas || []; },
@@ -137,7 +170,17 @@ function rutasMedio(m) {
 }
 async function bloqueMaterial(m, { mostrarTexto = true } = {}) {
   const div = h(`<div class="material"></div>`);
-  if (m.tipo === 'audio') {
+  if (m.tipo === 'audio' && /^voz/i.test(m.fuente || '')) {
+    // Audio original de la plataforma: lo lee la voz rusa del dispositivo (sin archivo mp3)
+    if (!HAY_VOZ) div.append(h(`<p class="error">Tu navegador no tiene voz. Usa la transcripción.</p>`));
+    else {
+      const fila = h(`<div class="voz-fila"><button type="button" class="btn sec">▶ Escuchar despacio</button> <button type="button" class="btn sec">▶ Velocidad normal</button> <button type="button" class="btn sec">■</button></div>`);
+      const [b1, b2, b3] = fila.querySelectorAll('button');
+      b1.onclick = () => leerDialogo(m.transcripcion, 0.7); b2.onclick = () => leerDialogo(m.transcripcion, 0.95); b3.onclick = () => speechSynthesis.cancel();
+      div.append(fila);
+    }
+    if (m.transcripcion) div.append(h(`<details><summary>Ver transcripción</summary><div class="texto-ru">${esc(m.transcripcion)}</div></details>`));
+  } else if (m.tipo === 'audio') {
     for (const [etq, p] of rutasMedio(m)) {
       const u = await api.url('materiales', p);
       div.append(h(`<div>${etq ? `<div class="etq">${esc(etq)}</div>` : ''}${u ? `<audio controls preload="none" src="${esc(u)}"></audio>` : `<p class="error">Audio no disponible (${esc(p)})</p>`}</div>`));
@@ -146,6 +189,12 @@ async function bloqueMaterial(m, { mostrarTexto = true } = {}) {
   } else if (m.tipo === 'imagen') {
     const u = await api.url('materiales', `img/${m.id}.jpg`);
     div.append(u ? h(`<img loading="lazy" alt="${esc(m.titulo)}" src="${esc(u)}">`) : h(`<p class="error">Imagen no disponible</p>`));
+  } else if (m.tipo === 'video' && /youtu\.?be/.test(m.fuente || '')) {
+    const idY = (String(m.fuente).match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{11})/) || [])[1];
+    const seg = t => { const p = String(t || '').split(':').map(Number); return p.some(isNaN) ? 0 : p.reduce((a, b) => a * 60 + b, 0); };
+    const ini = seg(m.inicio), fin = seg(m.fin);
+    div.append(idY ? h(`<div class="yt"><iframe src="https://www.youtube-nocookie.com/embed/${idY}?rel=0${ini ? `&start=${ini}` : ''}${fin ? `&end=${fin}` : ''}" title="${esc(m.titulo || 'Video')}" allow="accelerometer; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe></div>`) : h(`<p class="error">Enlace de YouTube no válido</p>`));
+    if (m.transcripcion) div.append(h(`<details><summary>Ver transcripción</summary><div class="texto-ru">${esc(m.transcripcion)}</div></details>`));
   } else if (m.tipo === 'video') {
     const u = await api.url('materiales', `video/${m.id}.mp4`);
     div.append(u ? h(`<video controls playsinline preload="metadata" src="${esc(u)}"></video>`) : h(`<p class="error">Video no disponible</p>`));
@@ -320,6 +369,23 @@ function hablar(texto) {
   const v = speechSynthesis.getVoices().find(x => /^ru/i.test(x.lang)); if (v) u.voice = v;
   speechSynthesis.cancel(); speechSynthesis.speak(u);
 }
+// Lee un diálogo línea por línea; cada hablante (línea que empieza con «—» o «Nombre:») alterna voz o tono
+function leerDialogo(texto, rate = 0.9) {
+  if (!HAY_VOZ || !texto) return;
+  speechSynthesis.cancel();
+  const voces = speechSynthesis.getVoices().filter(x => /^ru/i.test(x.lang));
+  const lineas = String(texto).replace(/́/g, '').split(/\n+/).map(l => l.trim()).filter(Boolean);
+  let turno = 0;
+  for (const l of lineas) {
+    const dialogo = /^[—–-]/.test(l) || /^[А-ЯЁA-Z][^:]{0,20}:/.test(l);
+    const u = new SpeechSynthesisUtterance(l.replace(/^[—–-]\s*/, '').replace(/^[А-ЯЁA-Z][^:]{0,20}:\s*/, ''));
+    u.lang = 'ru-RU'; u.rate = rate;
+    if (voces.length) u.voice = voces[(dialogo ? turno : 0) % voces.length];
+    if (dialogo && voces.length < 2) u.pitch = turno % 2 ? 0.75 : 1.15;
+    if (dialogo) turno++;
+    speechSynthesis.speak(u);
+  }
+}
 function botonVoz(texto) {
   if (!HAY_VOZ) return document.createTextNode('');
   const b = h(`<button class="voz" type="button" title="Escuchar" aria-label="Escuchar">🔊</button>`);
@@ -355,7 +421,7 @@ function celebrarNivel(nivel, eventos) {
   const pedido = eventos.some(e => e.tipo === 'certificado' && e.ref === nivel);
   const o = h(`<div class="felicidades"><div class="caja"><div class="copa">🏆</div><h1>¡Felicidades!</h1>
     <p class="grande">Alcanzaste el nivel <b>${esc(nivel)}</b> de ruso.</p><p>Поздравляем! Dominas el vocabulario, la gramática y las habilidades de este nivel.</p>
-    ${pedido ? '' : `<p class="instr">¿Quieres recibir tu certificado de nivel ${esc(nivel)}?</p><p class="sub">El certificado se entrega después de aprobar un examen de suficiencia. Tu profesora te escribirá con los detalles.</p>`}
+    ${pedido ? '' : `<p class="instr">¿Quieres recibir tu certificado de nivel ${esc(nivel)}?</p><p class="sub">El certificado se entrega al aprobar el examen de suficiencia (5 partes, mínimo 66 % en cada una). Puedes rendirlo cuando quieras desde tu inicio.</p>`}
     <div class="acciones" style="justify-content:center">${pedido ? '' : `<button class="btn" data-c="1" type="button">Sí, quiero mi certificado</button>`}<button class="btn sec" data-c="0" type="button">${pedido ? 'Seguir aprendiendo' : 'Ahora no'}</button></div><p class="error" hidden></p></div></div>`);
   document.body.append(o); confeti();
   o.querySelectorAll('[data-c]').forEach(b => b.onclick = async () => {
@@ -441,7 +507,7 @@ async function renderizar(ej) {
 
 // ---------------------------------------------------------------- vistas
 function nav(activa) {
-  if (!sesion) { $nav.innerHTML = ''; return; }
+  if (!sesion) { $nav.innerHTML = `<a href="#/planes">Planes</a><a href="#/entrar">Entrar</a><a class="btn-mini" href="#/registro">Prueba gratis</a>`; return; }
   const links = [['#/', perfil?.rol === 'docente' ? 'Lecciones' : 'Inicio', 'inicio']];
   if (perfil?.rol === 'docente') links.push(['#/docente', 'Panel docente', 'docente']);
   $nav.innerHTML = links.map(([u, t, k]) => `<a href="${u}" class="${k === activa ? 'activo' : ''}">${t}</a>`).join('') +
@@ -451,10 +517,11 @@ function nav(activa) {
 function vLogin(msg = '') {
   nav();
   $app.innerHTML = '';
-  const f = h(`<form class="tarjeta login"><h1>${esc(NOMBRE_CURSO)}</h1><p class="sub">Entra con el correo y la contraseña que te dio tu profesor.</p>
+  const f = h(`<form class="tarjeta login"><h1>${esc(NOMBRE_CURSO)}</h1><p class="sub">Entra con tu correo y contraseña.</p>
     <div class="campo"><label>Correo</label><input type="email" required autocomplete="username"></div>
     <div class="campo"><label>Contraseña</label><input type="password" required autocomplete="current-password"></div>
-    <p class="error">${esc(msg)}</p><button class="btn" type="submit">Entrar</button></form>`);
+    <p class="error">${esc(msg)}</p><button class="btn" type="submit">Entrar</button>
+    <p class="sub"><a href="#/recuperar">¿Olvidaste tu contraseña?</a> · <a href="#/registro">Crear cuenta gratis</a></p></form>`);
   f.onsubmit = async e => {
     e.preventDefault(); const [em, pw] = f.querySelectorAll('input');
     f.querySelector('button').disabled = true;
@@ -477,8 +544,80 @@ async function cargarModelo(intentos, eventos, oralesZoom = false) {
     reglasCache || api.reglas(), vocabCache || api.vocabUso(), formasCache || fetch('formas.json').then(r => r.ok ? r.json() : { f: {}, m: {} }).catch(() => ({ f: {}, m: {} }))]);
   reglasCache = reglas; vocabCache = voc; formasCache = formas;
   const vocab = Object.fromEntries(voc.map(v => [v.id, v]));
+  if (enPrueba()) {                                                        // prueba gratis: solo la primera lección
+    const esc0 = escenarios.filter(s => s.id === LECCION_PRUEBA);
+    const ej0 = ejercicios.filter(e => e.escenario === LECCION_PRUEBA);
+    return { m: prepararModelo({ escenarios: esc0, ejercicios: ej0, tipos, intentos, eventos, reglas, temas, formas, vocab, oralesZoom }), escenarios, vocab };
+  }
   return { m: prepararModelo({ escenarios, ejercicios, tipos, intentos, eventos, reglas, temas, formas, vocab, oralesZoom }), escenarios, vocab };
 }
+
+// Modo ejercicio: tras empezar, las tareas siguen una tras otra hasta que el alumno sale o recarga la página
+let enFlujo = false;
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a'); if (!a) return;
+  if (a.hasAttribute('data-flujo')) enFlujo = true;
+  else if (a.getAttribute('href') === '#/' || a.getAttribute('href') === '#/salir') enFlujo = false;
+}, true);
+// Guías que se muestran una vez por dispositivo, justo antes de la primera actividad que las necesita
+const guiaVista = k => { try { return localStorage.getItem(`guia_${k}_${sesion?.user?.id || 'demo'}`) === '1'; } catch (e) { return true; } };
+function guia(k, seguir) {
+  const T = {
+    teclado: ['⌨️ Antes de escribir en ruso', `<p>En esta actividad vas a escribir con letras rusas. Tienes dos opciones:</p>
+      <p><b>1. Teclado en pantalla.</b> Debajo de cada actividad aparecen las letras rusas: toca una y se escribe. No hay que instalar nada.</p>
+      <p><b>2. Teclado ruso en tu dispositivo</b> (más cómodo para escribir seguido):</p>
+      <ul><li><b>Android:</b> Ajustes → Sistema → Idiomas e introducción → Teclado en pantalla → Gboard → Idiomas → Añadir teclado → Ruso. Cambias de idioma con la tecla 🌐.</li>
+      <li><b>iPhone / iPad:</b> Ajustes → General → Teclado → Teclados → Añadir nuevo teclado → Ruso. Cambias con la tecla 🌐.</li>
+      <li><b>Windows:</b> Configuración → Hora e idioma → Idioma y región → Agregar un idioma → Русский. Cambias con <kbd>Windows</kbd> + <kbd>Espacio</kbd>.</li>
+      <li><b>Mac:</b> Ajustes del Sistema → Teclado → Fuentes de entrada → Editar → + → Ruso. Cambias con <kbd>Ctrl</kbd> + <kbd>Espacio</kbd> o la tecla 🌐.</li></ul>
+      <p class="sub">Los nombres de los menús pueden variar un poco según la versión de tu dispositivo.</p>`],
+    voz: ['🔊 Antes de escuchar las palabras', `<p>Junto a cada palabra rusa verás el botón 🔊: lee la palabra con la voz rusa de tu dispositivo. Pruébalo:</p>
+      <p><button class="btn sec" type="button" data-probar>🔊 Probar: «Привет!»</button></p>
+      <p>Si no suena o suena con acento extraño, instala la voz rusa:</p>
+      <ul><li><b>Android:</b> Ajustes → Sistema → Idiomas e introducción → Síntesis de voz → ⚙ junto a «Servicios de voz de Google» → Instalar datos de voz → Ruso.</li>
+      <li><b>iPhone / iPad:</b> Ajustes → Accesibilidad → Contenido leído → Voces → Ruso → descarga una voz (por ejemplo, Milena).</li>
+      <li><b>Windows:</b> Configuración → Hora e idioma → Voz → Agregar voces → Ruso.</li>
+      <li><b>Mac:</b> Ajustes del Sistema → Accesibilidad → Contenido leído → Voz del sistema → Administrar voces → Ruso.</li></ul>
+      <p class="sub">Después de instalarla, cierra y vuelve a abrir la plataforma. Los nombres de los menús pueden variar según la versión.</p>`] }[k];
+  $app.innerHTML = `<div class="tarjeta guia"><h2 style="margin-top:0">${T[0]}</h2>${T[1]}<div class="acciones"><button class="btn" type="button" data-ok>Entendido, continuar →</button></div></div>`;
+  const p = $app.querySelector('[data-probar]'); if (p) p.onclick = () => hablar('Привет!');
+  $app.querySelector('[data-ok]').onclick = () => { try { localStorage.setItem(`guia_${k}_${sesion?.user?.id || 'demo'}`, '1'); } catch (e) {} seguir(); };
+}
+// Bienvenida: se muestra una vez, en el primer ingreso del alumno (antes de su primera actividad)
+function bienvenida(seguir) {
+  const nombre = (perfil?.nombre || '').split(' ')[0];
+  const zoom = !!perfil?.orales_zoom, prueba = enPrueba();
+  $app.innerHTML = `<div class="tarjeta guia bienvenida">
+    <h1 style="margin-top:0">¡Добро пожаловать${nombre ? ', ' + esc(nombre) : ''}! 👋</h1>
+    <p>Te damos la bienvenida a <b>${esc(NOMBRE_CURSO)}</b>. Aquí aprendes ruso a tu ritmo: la plataforma decide qué te toca practicar cada día según lo que ya sabes.</p>
+    <h3>Cómo funciona</h3>
+    <ol>
+      <li><b>Abre «Inicio» y pulsa «Empezar».</b> Siempre verás una sola tarea: la siguiente que te conviene. Al terminarla, la siguiente aparece sola; sales con «← Salir».</li>
+      <li><b>Primero las letras.</b> Empiezas con el alfabeto: ninguna palabra aparece antes de que conozcas sus letras.</li>
+      <li><b>Un poco cada día.</b> Con 15–20 minutos diarios avanzas más que con dos horas una vez por semana. Tu <b>racha</b> 🔥 cuenta los días seguidos.</li>
+      <li><b>Repaso del día.</b> La plataforma te devuelve las palabras justo cuando empiezas a olvidarlas. Hazlo antes del material nuevo.</li>
+      <li><b>Tus errores no se castigan:</b> sirven para saber qué repasar.</li>
+      ${zoom ? '<li><b>Clase por Zoom.</b> Las tareas orales (hablar, presentarte, describir) se guardan para tu clase semanal con la profesora.</li>' : ''}
+      ${prueba ? '<li><b>Prueba gratis:</b> tienes la primera lección completa (E03 «Привет! Как тебя зовут?»). Al terminarla podrás elegir un plan.</li>' : ''}
+    </ol>
+    <h3>Tu primera lección: «Привет! Как тебя зовут?»</h3>
+    <ul>
+      <li>Las primeras letras del alfabeto (А, О, К, М, Т…) y cómo suenan.</li>
+      <li>Saludar, presentarte y preguntar «¿cómo te llamas?».</li>
+      <li>Videos cortos de clase y tus primeras palabras parecidas al español.</li>
+    </ul>
+    <h3>Antes de empezar (2 minutos)</h3>
+    <ul>
+      <li>Usa audífonos o sube el volumen: muchas actividades tienen voz 🔊.</li>
+      <li><b>Instálala como app:</b> en el celular, menú del navegador → «Agregar a pantalla de inicio» (Android) o Compartir → «Agregar a inicio» (iPhone).</li>
+      <li>Cuando una actividad pida teclado ruso o voz rusa, te explicaremos cómo activarlos en tu dispositivo.</li>
+      <li>¿Algo no funciona? Usa «⚠️ Reportar un problema técnico» abajo a la derecha.</li>
+    </ul>
+    <div class="acciones"><button class="btn" type="button" data-ok>¡Empezar! Поехали! →</button></div>
+  </div>`;
+  $app.querySelector('[data-ok]').onclick = () => { try { localStorage.setItem(`guia_bienvenida_${sesion?.user?.id || 'demo'}`, '1'); } catch (e) {} seguir(); };
+}
+const pideTeclado = (c, tipoEj) => (c.items || []).some(it => it.tipo === 'input' && (it.answers || []).some(a => /[а-яё]/i.test(a))) || (c.tipo === 'abierta' && !ORALES.has(tipoEj));
 
 async function vInicio() {
   nav('inicio');
@@ -497,6 +636,7 @@ async function vInicio() {
     $app.append(l);
     return;
   }
+  if (!intentos.length && !guiaVista('bienvenida')) return bienvenida(vInicio);   // primer ingreso: cómo funciona la plataforma
   let est = estadoAlumno(m), sig = siguienteTarea(m);
   if (sig.tipo === 'iniciar') {                       // primer escenario: se fija sin preguntar
     await api.registrar('escenario', [sig.escenario.id]); return vInicio();
@@ -510,13 +650,33 @@ async function vInicio() {
   if (sig.tipo === 'planificar') {                    // repaso del día: se fija al primer ingreso
     await api.registrar('repaso', [sig.ref]); return vInicio();
   }
+  const esEj = !!sig.ejercicio && sig.tipo !== 'zoom';
+  if (['descanso', 'fin'].includes(sig.tipo)) enFlujo = false;
+  if (enFlujo && esEj) { location.hash = `#/x/${sig.ejercicio.id}`; return; }          // sigue directo con el siguiente ejercicio
+  if (sig.tipo === 'tarjetas') {
+    if (HAY_VOZ && !guiaVista('voz')) return guia('voz', vInicio);
+    if (sig.items.some(i => i.modo === 'p') && !guiaVista('teclado')) return guia('teclado', vInicio);
+  }
   const hoy = intentos.filter(i => new Date(i.creado_en).toDateString() === new Date().toDateString()).length;
   $app.innerHTML = `<h1>Привет${perfil?.nombre ? ', ' + esc(perfil.nombre) : ''}!</h1>
     <p class="sub">${hoy ? `Hoy llevas ${hoy} ${hoy === 1 ? 'tarea' : 'tareas'}. ¡Sigue así!` : 'Tu plan avanza paso a paso según lo que ya sabes.'}</p>
     <div class="meta">${esc(textoProyeccion(proyeccion(m)))}</div>`;
   const rc = racha(intentos, eventos);
-  if (rc.n) $app.querySelector('.sub').after(h(`<div class="racha ${rc.hoy ? '' : 'pend'}">🔥 <b>${rc.n}</b> ${rc.n === 1 ? 'día seguido' : 'días seguidos'}${rc.hoy ? '' : ' · haz una tarea hoy para no perder tu racha'}</div>`));
-  celebrarNivel(proyeccion(m).logrado || (location.search.includes('demo') && new URLSearchParams(location.search).get('celebrar')), eventos);
+  if (rc.n) $app.querySelector('.sub').after(h(`<div class="racha ${rc.hoy ? '' : 'pend'}">🔥 <b>${rc.n}</b> ${rc.n === 1 ? 'día seguido' : 'días seguidos'}${rc.hoy ? '' : ' · practica hoy (cualquier actividad cuenta) para mantener tu racha'}</div>`));
+  if (enPrueba()) {
+    $app.querySelector('.meta').textContent = 'Prueba gratis: primera lección completa (alfabeto, sonidos, saludos y presentaciones).';
+    if (['fin', 'elegir'].includes(sig.tipo)) { $app.append(tarjetaFinPrueba()); return; }
+  } else {
+    celebrarNivel(proyeccion(m).logrado || (location.search.includes('demo') && new URLSearchParams(location.search).get('celebrar')), eventos);
+    const logrado = proyeccion(m).logrado || (location.search.includes('demo') && new URLSearchParams(location.search).get('celebrar'));
+    const [certs, exs] = await Promise.all([api.certificados().catch(() => []), api.examenes().catch(() => [])]);
+    for (const c of certs) $app.append(h(`<a class="fila cert-fila" href="#/certificado/${esc(c.codigo)}"><div class="txt"><b>📜 Certificado de nivel ${esc(c.nivel)}</b><small>Código ${esc(c.codigo)} · ver e imprimir</small></div></a>`));
+    if (logrado && !certs.some(c => c.nivel === logrado)) {
+      const ex = exs.find(x => x.nivel === logrado && x.estado !== 'anulado');
+      $app.append(h(`<div class="tarjeta"><div class="etq">Examen de suficiencia · ${esc(logrado)}</div>${ex ? `<p>${ex.estado === 'en_curso' ? 'Tienes un examen sin terminar.' : ex.estado === 'entregado' ? 'Examen entregado: tu profesora lo está calificando.' : ex.aprobado ? 'Aprobado: tu certificado se está emitiendo.' : 'Calificado: no alcanzaste el mínimo en alguna parte. Puedes volver a intentarlo.'}</p>` : `<p>Ya dominas el nivel ${esc(logrado)}. Rinde el examen para obtener tu certificado.</p>`}
+        ${!ex || ex.estado === 'en_curso' || (ex.estado === 'calificado' && !ex.aprobado) ? `<div class="acciones"><a class="btn sec" href="#/examen?nivel=${esc(logrado)}">${ex?.estado === 'en_curso' ? 'Continuar examen' : 'Rendir examen'}</a></div>` : ''}</div>`));
+    }
+  }
   const card = h(`<div class="tarjeta"></div>`);
   const filaAct = est.actual ? est.fila[est.actual] : null;
   if (filaAct && !['elegir', 'fin', 'repasoDia', 'tarjetas', 'descanso'].includes(sig.tipo)) card.append(h(`<div class="etq">${esc(filaAct.s.nombre)} · ${filaAct.hechos} de ${filaAct.total}</div>`));
@@ -556,7 +716,7 @@ async function vInicio() {
     const e0 = sig.ejercicio;
     card.append(h(`<div class="etq">Repaso de hoy · ${sig.k} de ${sig.n}</div>`));
     card.append(h(`<p class="instr">${esc(e0.instrucciones)}</p>`));
-    card.append(h(`<div class="acciones"><a class="btn" href="#/x/${e0.id}">Empezar →</a></div>`));
+    card.append(h(`<div class="acciones"><a class="btn" data-flujo href="#/x/${e0.id}">Empezar →</a></div>`));
   } else if (sig.tipo === 'tarjetas') {
     card.append(h(`<div class="etq">Repaso de hoy · palabras</div>`));
     card.append(tarjetasRepaso(sig.items, vocab));
@@ -564,9 +724,12 @@ async function vInicio() {
     const e0 = sig.ejercicio;
     card.append(h(`<div class="etq">${sig.tipo === 'repaso' ? 'Repaso' : 'Siguiente ejercicio'} · ${esc(e0.hab)}</div>`));
     card.append(h(`<p class="instr">${esc(e0.instrucciones)}</p>`));
-    card.append(h(`<div class="acciones"><a class="btn" href="#/x/${e0.id}">Empezar →</a></div>`));
+    card.append(h(`<div class="acciones"><a class="btn" data-flujo href="#/x/${e0.id}">Empezar →</a></div>`));
   }
   $app.append(card);
+  if (enFlujo && ['regla', 'palabras', 'tarjetas', 'elegir'].includes(sig.tipo)) {     // en modo ejercicio: solo la tarea, sin el resto del inicio
+    $app.innerHTML = ''; $app.append(h(`<div class="migas"><a href="#/">← Salir</a></div>`), card); return;
+  }
 
   // progreso por habilidad y nivel (sin mostrar el temario)
   const proy = proyeccion(m);
@@ -628,13 +791,17 @@ async function vEjercicio(id) {
   $app.innerHTML = `<p class="cargando">Cargando…</p>`;
   const ej = await api.ejercicio(id);
   const c = typeof ej.contenido === 'string' ? JSON.parse(ej.contenido) : ej.contenido;
+  if (perfil?.rol !== 'docente') {
+    if (c.tipo === 'descubrir' && HAY_VOZ && !guiaVista('voz')) return guia('voz', () => vEjercicio(id));
+    if (pideTeclado(c, ej.tipo_ejercicio) && !guiaVista('teclado')) return guia('teclado', () => vEjercicio(id));
+  }
   const hermanos = (await api.ejerciciosEsc(ej.escenario)).map(x => x.id);
   const pos = hermanos.indexOf(id), sig = hermanos[pos + 1];
   const matIds = [...new Set([...ids(ej.material), ...(c.imagen ? [c.imagen] : [])])];
   const mats = await api.materiales(matIds);
   mats.sort((a, b) => matIds.indexOf(a.id) - matIds.indexOf(b.id));
 
-  $app.innerHTML = perfil.rol === 'docente' ? `<div class="migas"><a href="#/e/${ej.escenario}">← ${esc(ej.escenario)}</a> · ejercicio ${pos + 1} de ${hermanos.length}</div>` : `<div class="migas"><a href="#/">← Inicio</a></div>`;
+  $app.innerHTML = perfil.rol === 'docente' ? `<div class="migas"><a href="#/e/${ej.escenario}">← ${esc(ej.escenario)}</a> · ejercicio ${pos + 1} de ${hermanos.length}</div>` : `<div class="migas"><a href="#/">← Salir</a></div>`;
   const card = h(`<div class="tarjeta"><p class="instr">${esc(ej.instrucciones)}</p><div class="media"></div><div class="cuerpo"></div><div class="res"></div><div class="acciones"></div></div>`);
   $app.append(card);
   const media = card.querySelector('.media');
@@ -664,9 +831,16 @@ async function vEjercicio(id) {
       const out = await r.corregir();
       if (out.abierta) {
         if (perfil?.orales_zoom && ORALES.has(ej.tipo_ejercicio)) api.registrar('zoom', [id]).catch(() => {});
-        await api.guardarIntento({ ejercicio_id: id, respuesta: out.respuesta, audio_path: out.audio || null, correcto: null, puntaje: null,
-          estado: (out.respuesta?.texto || out.audio) ? 'pendiente_docente' : 'corregido' });
-        res.append(h(`<div class="resultado pend">${out.audio || out.respuesta?.texto ? 'Enviado. Tu profesor lo revisará y verás sus comentarios aquí.' : 'Práctica registrada.'}</div>`));
+        const usarIA = !!out.respuesta?.texto && !ORALES.has(ej.tipo_ejercicio) && await iaActiva();
+        const guardado = await api.guardarIntento({ ejercicio_id: id, respuesta: out.respuesta, audio_path: out.audio || null, correcto: null, puntaje: null,
+          estado: usarIA ? 'pendiente_ia' : (out.respuesta?.texto || out.audio) ? 'pendiente_docente' : 'corregido' });
+        if (usarIA) {
+          const espera = h(`<div class="resultado pend">Enviado. Revisando tu texto… ⏳</div>`); res.append(espera);
+          try {
+            const r = await api.corregirIA(guardado.id);
+            espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div><p class="sub">Tu profesora también lo revisará.</p></div>`) : h(`<div class="resultado pend">Enviado. Tu profesora lo revisará y verás sus comentarios aquí.</div>`));
+          } catch (e) { espera.textContent = 'Enviado. Tu profesora lo revisará y verás sus comentarios aquí.'; api.revisar(guardado.id, { estado: 'pendiente_docente' }).catch(() => {}); }
+        } else res.append(h(`<div class="resultado pend">${out.audio || out.respuesta?.texto ? 'Enviado. Tu profesor lo revisará y verás sus comentarios aquí.' : 'Práctica registrada.'}</div>`));
       } else {
         const puntaje = Math.round(100 * out.bien / out.total);
         await api.guardarIntento({ ejercicio_id: id, respuesta: { valores: out.respuesta, detalle: out.detalle }, correcto: puntaje === 100, puntaje, estado: 'corregido' });
@@ -679,7 +853,7 @@ async function vEjercicio(id) {
       resolverImgs(card);
       acc.innerHTML = '';
       const bOtra = h(`<button class="btn sec" type="button">Intentar de nuevo</button>`); bOtra.onclick = () => vEjercicio(id); acc.append(bOtra);
-      acc.append(h(`<a class="btn" href="#/">Siguiente tarea →</a>`));
+      acc.append(h(`<a class="btn" data-flujo href="#/">Siguiente tarea →</a>`));
     } catch (err) { res.append(h(`<p class="error">${esc(err.message || 'No se pudo guardar. Revisa tu conexión.')}</p>`)); bEnviar.disabled = false; }
   };
 }
@@ -796,13 +970,17 @@ async function vDocente(tab = 'alumnos') {
   nav('docente');
   $app.innerHTML = `<h1>Panel docente</h1>`;
   const pes = h(`<div class="pestanas"></div>`);
-  [['alumnos', 'Alumnos'], ['revisar', 'Por revisar'], ['contenido', 'Contenido y medios']].forEach(([k, t]) => {
+  [['alumnos', 'Alumnos'], ['revisar', 'Por revisar'], ['examenes', 'Exámenes'], ['reportes', 'Reportes'], ['ajustes', 'IA y ajustes'], ['contenido', 'Contenido y medios']].forEach(([k, t]) => {
     const b = h(`<button class="${k === tab ? 'activo' : ''}">${t}</button>`); b.onclick = () => location.hash = `#/docente/${k}`; pes.append(b);
   });
   $app.append(pes);
   const cuerpo = h(`<div></div>`); $app.append(cuerpo);
+  if (tab !== 'ajustes') avisoEspacio(pes.parentNode.insertBefore(h(`<div></div>`), pes.nextSibling));
   if (tab === 'contenido') return tContenido(cuerpo);
   if (tab === 'revisar') return tRevisar(cuerpo);
+  if (tab === 'examenes') return tExamenes(cuerpo);
+  if (tab === 'reportes') return tReportes(cuerpo);
+  if (tab === 'ajustes') return tAjustes(cuerpo);
   if (tab.startsWith('alumno-')) return tAlumno(cuerpo, tab.slice(7));
   return tAlumnos(cuerpo);
 }
@@ -810,7 +988,7 @@ async function vDocente(tab = 'alumnos') {
 async function tAlumnos(el) {
   const [ps] = await Promise.all([api.alumnos()]);
   const al = ps.filter(p => p.rol === 'alumno');
-  el.append(h(`<p class="sub">Para agregar un alumno: Supabase → Authentication → Users → Add user (marca «Auto Confirm User»). Aparecerá aquí automáticamente y empezará por el principio; la plataforma decide cada tarea según su avance.</p>`));
+  el.append(h(`<p class="sub">Los alumnos se registran solos desde la página pública (empiezan con la prueba gratis). También puedes crearlos en Supabase → Authentication → Users → Add user. Cambia su plan en su ficha.</p>`));
   if (!al.length) { el.append(h(`<div class="tarjeta">Aún no hay alumnos.</div>`)); return; }
   const lista = h(`<div class="lista"></div>`);
   el.append(lista);
@@ -838,6 +1016,11 @@ async function tAlumno(el, uid) {
   const zt = h(`<label style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" ${p.orales_zoom ? 'checked' : ''}> Parte oral por Zoom: los ejercicios orales no se le muestran y van a la lista de la clase</label>`);
   zt.querySelector('input').onchange = async e => { await api.actualizarPerfil(uid, { orales_zoom: e.target.checked }); location.reload(); };
   el.append(zt);
+  const PL = [['prueba', 'Prueba gratis (solo primera lección)'], ['plataforma', 'Plataforma'], ['zoom_grupal', 'Plataforma + Zoom grupal'], ['zoom_individual', 'Plataforma + Zoom individual'], ['completo', 'Acceso completo (sin vencimiento)']];
+  const pf = h(`<div class="campo" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end"><div><label>Plan</label><select>${PL.map(([k, t]) => `<option value="${k}" ${p.plan === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+    <div><label>Pagado hasta</label><input type="date" value="${esc(p.plan_hasta || '')}"></div><button class="btn sec" type="button">Guardar plan</button></div>`);
+  pf.querySelector('button').onclick = async () => { await api.actualizarPerfil(uid, { plan: pf.querySelector('select').value, plan_hasta: pf.querySelector('input').value || null }); pf.querySelector('button').textContent = 'Guardado ✓'; };
+  el.append(pf);
   const rz = h(`<div style="margin:0 0 12px"><button class="btn sec" type="button">Reiniciar progreso del alumno</button> <span class="sub"></span></div>`);
   const [bR, sR] = [rz.querySelector('button'), rz.querySelector('span')]; let paso = 0;
   bR.onclick = async () => {
@@ -1023,11 +1206,412 @@ async function tContenido(el) {
 }
 
 // ---------------------------------------------------------------- arranque y rutas
-async function router() {
-  const [, r, p] = location.hash.replace(/^#\/?/, '#/').split('/');
+
+// ================================================================ página pública, registro y planes
+function vPublico() {
+  nav();
+  const pl = PLANES.map(p => `<div class="plan ${p.destacado ? 'dest' : ''}"><h3>${esc(p.nombre)}</h3>
+    <div class="precio">${esc(p.precio)}<span>${esc(p.periodo || '')}</span></div>${p.anual ? `<div class="sub">${esc(p.anual)}</div>` : ''}
+    <ul>${p.incluye.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+    ${p.pago ? `<a class="btn" href="${esc(p.pago)}" target="_blank" rel="noopener">Elegir</a>` : `<a class="btn sec" href="#/registro">Empieza gratis</a>`}</div>`).join('');
+  $app.innerHTML = `<section class="heroe"><h1>Aprende ruso desde cero, a tu ritmo</h1>
+    <p class="grande">Curso para hispanohablantes: lecciones cortas que se ordenan solas según lo que ya sabes, repaso inteligente de palabras y, si quieres, una clase semanal en vivo con tu profesora.</p>
+    <div class="acciones"><a class="btn" href="#/registro">Prueba gratis la primera lección</a><a class="btn sec" href="#/entrar">Ya tengo cuenta</a></div></section>
+    <section class="ventajas">
+      <div><b>🧭 Ruta personal</b><p>La plataforma decide la siguiente tarea según tu avance: nunca ves una palabra o regla que no te hayan enseñado.</p></div>
+      <div><b>🔁 Repaso que no olvida</b><p>Cada día empiezas por lo que estás a punto de olvidar. Ves en cuántos días tendrás tu nivel.</p></div>
+      <div><b>🗣️ Hablar de verdad</b><p>Escritura y pronunciación con comentarios, y en los planes con clase, conversación semanal por Zoom.</p></div>
+      <div><b>📜 Certificado</b><p>Al dominar un nivel puedes rendir el examen tipo ТРКИ y recibir un certificado verificable en línea.</p></div>
+    </section>
+    <h2>Planes</h2><div class="planes">${pl}</div>
+    <p class="sub">La prueba gratis incluye la primera lección completa: alfabeto, sonidos, saludos y presentaciones. No pedimos tarjeta.</p>
+    <p class="sub"><a href="#/verificar">Verificar un certificado</a></p>`;
+}
+
+function vRegistro(msg = '') {
+  nav();
+  $app.innerHTML = '';
+  const f = h(`<form class="tarjeta login"><h1>Crea tu cuenta</h1><p class="sub">Gratis: incluye la primera lección completa.</p>
+    <div class="campo"><label>Tu nombre</label><input required autocomplete="name"></div>
+    <div class="campo"><label>Correo</label><input type="email" required autocomplete="email"></div>
+    <div class="campo"><label>Contraseña (mínimo 8 caracteres)</label><input type="password" required minlength="8" autocomplete="new-password"></div>
+    <label class="sub" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" required style="width:auto;margin-top:4px"> Acepto los términos de uso y la política de privacidad (tus datos solo se usan para el curso).</label>
+    <p class="error">${esc(msg)}</p><button class="btn" type="submit">Crear cuenta</button>
+    <p class="sub">¿Ya tienes cuenta? <a href="#/entrar">Entrar</a></p></form>`);
+  f.onsubmit = async e => {
+    e.preventDefault(); const [nom, em, pw] = f.querySelectorAll('input');
+    f.querySelector('button').disabled = true;
+    try {
+      const r = await api.registro(nom.value.trim(), em.value.trim(), pw.value);
+      if (r?.session) return iniciar();
+      $app.innerHTML = `<div class="tarjeta login"><h1>Revisa tu correo 📬</h1><p>Te enviamos un enlace para confirmar tu cuenta a <b>${esc(em.value.trim())}</b>. Ábrelo y vuelve aquí para entrar.</p><a class="btn" href="#/entrar">Ir a entrar</a></div>`;
+    } catch (err) { vRegistro(/registered|exists/i.test(err.message || '') ? 'Ese correo ya tiene cuenta. Entra o recupera tu contraseña.' : 'No se pudo crear la cuenta: ' + (err.message || 'inténtalo de nuevo.')); }
+  };
+  $app.append(f);
+}
+
+function vRecuperar(msg = '') {
+  nav();
+  $app.innerHTML = '';
+  const f = h(`<form class="tarjeta login"><h1>Recuperar contraseña</h1><p class="sub">Te enviaremos un enlace para crear una nueva.</p>
+    <div class="campo"><label>Correo</label><input type="email" required autocomplete="email"></div>
+    <p class="error">${esc(msg)}</p><button class="btn" type="submit">Enviar enlace</button><p class="sub"><a href="#/entrar">Volver</a></p></form>`);
+  f.onsubmit = async e => {
+    e.preventDefault(); f.querySelector('button').disabled = true;
+    try { await api.recuperar(f.querySelector('input').value.trim()); $app.innerHTML = `<div class="tarjeta login"><h1>Listo</h1><p>Si el correo tiene cuenta, recibirás un enlace en unos minutos.</p></div>`; }
+    catch (err) { vRecuperar('No se pudo enviar: ' + (err.message || '')); }
+  };
+  $app.append(f);
+}
+
+function vNuevaClave() {
+  $app.innerHTML = '';
+  const f = h(`<form class="tarjeta login"><h1>Nueva contraseña</h1><div class="campo"><label>Contraseña nueva (mínimo 8 caracteres)</label><input type="password" required minlength="8" autocomplete="new-password"></div>
+    <p class="error"></p><button class="btn" type="submit">Guardar</button></form>`);
+  f.onsubmit = async e => {
+    e.preventDefault();
+    try { await api.nuevaClave(f.querySelector('input').value); location.hash = '#/'; }
+    catch (err) { f.querySelector('.error').textContent = err.message || 'No se pudo guardar.'; }
+  };
+  $app.append(f);
+}
+
+// Plan del alumno: 'prueba' solo abre la primera lección (E03)
+const LECCION_PRUEBA = 'E03';
+function enPrueba() {
+  if (!perfil || perfil.rol === 'docente') return false;
+  if (perfil.plan === 'prueba') return true;
+  if (perfil.plan !== 'completo' && perfil.plan_hasta && new Date(perfil.plan_hasta + 'T23:59:59') < new Date()) return true;   // plan vencido
+  return false;
+}
+function tarjetaFinPrueba() {
+  const vencido = perfil?.plan && perfil.plan !== 'prueba';
+  return h(`<div class="tarjeta"><div class="etq">${vencido ? 'Tu plan terminó' : 'Terminaste tu prueba gratis 🎉'}</div>
+    <h2 style="margin-top:4px">${vencido ? 'Renueva para seguir avanzando' : '¡Ya sabes leer en ruso, saludar y presentarte!'}</h2>
+    <p>Para seguir con las siguientes lecciones, el repaso diario y el certificado, elige un plan. Tu progreso se guarda.</p>
+    <div class="acciones"><a class="btn" href="#/planes">Ver planes</a></div></div>`);
+}
+
+// ================================================================ reportar un problema técnico
+function botonReporte() {
+  if (document.getElementById('reportar')) return;
+  const b = h(`<button id="reportar" type="button" class="reportar">⚠️ Reportar un problema técnico</button>`);
+  b.onclick = () => {
+    const o = h(`<div class="felicidades"><form class="caja" style="text-align:left"><h2 style="margin-top:0">Reportar un problema técnico</h2>
+      <p class="sub">Cuéntanos qué pasó: qué estabas haciendo, qué esperabas y qué salió. Incluimos automáticamente la página en la que estás.</p>
+      <textarea required minlength="3" placeholder="Ej.: En el ejercicio de las letras, el botón Comprobar no hace nada."></textarea>
+      <p class="error"></p><div class="acciones"><button class="btn" type="submit">Enviar</button><button class="btn sec" type="button" data-x>Cancelar</button></div></form></div>`);
+    o.querySelector('[data-x]').onclick = () => o.remove();
+    o.querySelector('form').onsubmit = async e => {
+      e.preventDefault(); const bt = o.querySelector('[type=submit]'); bt.disabled = true;
+      try {
+        await api.reportar({ texto: o.querySelector('textarea').value.trim(), pagina: location.hash || '#/', navegador: navigator.userAgent.slice(0, 300) });
+        o.querySelector('.caja').innerHTML = `<h2 style="margin-top:0">¡Gracias! ✓</h2><p>Recibimos tu reporte y lo revisaremos pronto.</p><div class="acciones"><button class="btn" type="button">Cerrar</button></div>`;
+        o.querySelector('button').onclick = () => o.remove();
+      } catch (err) { o.querySelector('.error').textContent = 'No se pudo enviar. Escríbele a tu profesora.'; bt.disabled = false; }
+    };
+    document.body.append(o); o.querySelector('textarea').focus();
+  };
+  document.body.append(b);
+}
+
+async function tReportes(el) {
+  const [rs, ps] = await Promise.all([api.reportes(), api.alumnos()]);
+  const nombre = id => ps.find(p => p.id === id)?.nombre || (id || '').slice(0, 8);
+  if (!rs.length) { el.append(h(`<div class="tarjeta">No hay reportes. 🎉</div>`)); return; }
+  for (const r of rs) {
+    const c = h(`<div class="tarjeta ${r.estado === 'resuelto' ? 'hecho' : ''}"><div class="etq">${esc(nombre(r.usuario))} · ${new Date(r.creado_en).toLocaleString()} · ${esc(r.pagina || '')} · ${r.estado === 'resuelto' ? '✓ resuelto' : '🆕 nuevo'}</div>
+      <p style="white-space:pre-wrap">${esc(r.texto)}</p><p class="sub">${esc(r.navegador || '')}</p>${r.estado === 'resuelto' ? '' : '<div class="acciones"><button class="btn sec" type="button">Marcar resuelto</button></div>'}</div>`);
+    const b = c.querySelector('button'); if (b) b.onclick = async () => { await api.resolverReporte(r.id); c.classList.add('hecho'); b.remove(); };
+    el.append(c);
+  }
+}
+
+// ================================================================ ajustes: interruptor de IA
+// ---------- espacio usado en Supabase (plan gratuito: base 500 MB, archivos 1 GB) ----------
+const LIMITES = { base: 500e6, archivos: 1e9 };
+const AVISO = 0.8;
+const mb = b => (b / 1e6 >= 1000 ? (b / 1e9).toFixed(2) + ' GB' : Math.round(b / 1e6) + ' MB');
+async function resumenEspacio() {
+  const filas = await api.espacio();
+  const base = filas.filter(f => f.tipo === 'base').reduce((s, f) => s + Number(f.bytes), 0);
+  const carpetas = filas.filter(f => f.tipo === 'archivos');
+  const arch = carpetas.reduce((s, f) => s + Number(f.bytes), 0);
+  return { base, arch, carpetas, pBase: base / LIMITES.base, pArch: arch / LIMITES.archivos };
+}
+function tarjetaEspacio(e) {
+  const barra = (t, usado, lim, p) => `<div class="espacio"><div class="espacio-t"><b>${t}</b> <span>${mb(usado)} de ${mb(lim)} · ${Math.round(p * 100)} %</span></div>
+    <div class="espacio-b"><div style="width:${Math.min(100, p * 100)}%" class="${p >= 1 ? 'lleno' : p >= AVISO ? 'alto' : ''}"></div></div></div>`;
+  const NOM = { materiales: 'materiales del curso (imágenes, audios, videos)', grabaciones: 'grabaciones orales de alumnos', examenes: 'fotos de cámara de exámenes' };
+  return h(`<div class="tarjeta"><h2 style="margin-top:0">Espacio en Supabase (plan gratuito)</h2>
+    ${barra('Base de datos', e.base, LIMITES.base, e.pBase)}${barra('Archivos', e.arch, LIMITES.archivos, e.pArch)}
+    <table class="tabla"><tr><th>Carpeta</th><th>Archivos</th><th>Tamaño</th></tr>${e.carpetas.sort((a, b) => b.bytes - a.bytes).map(f => `<tr><td>${esc(NOM[f.nombre] || f.nombre)}</td><td>${f.archivos ?? ''}</td><td>${mb(Number(f.bytes))}</td></tr>`).join('')}</table>
+    <p class="sub">Aviso al llegar al ${AVISO * 100} %. Fotos de cámara de exámenes se borran solas a los 30 días. Para liberar más espacio: borra grabaciones antiguas (Supabase → Storage), o comprime videos antes de subirlos. Las descargas mensuales (límite 5 GB) solo se ven en Supabase → Usage.</p></div>`);
+}
+async function avisoEspacio(el) {
   try {
-    if (!sesion) return vLogin();
-    if (r === 'salir') { await api.logout(); sesion = null; perfil = null; location.hash = '#/'; return vLogin(); }
+    const e = await resumenEspacio();
+    const p = Math.max(e.pBase, e.pArch);
+    if (p >= AVISO) el.prepend(h(`<div class="tarjeta aviso-espacio">⚠️ <b>Espacio de Supabase al ${Math.round(p * 100)} %</b> (${e.pArch >= e.pBase ? 'archivos' : 'base de datos'}). Revisa «IA y ajustes» para liberar espacio antes de llegar al límite del plan gratuito.</div>`));
+  } catch (err) { /* sin SQL 09 todavía: no se muestra aviso */ }
+}
+
+async function tAjustes(el) {
+  try { el.append(tarjetaEspacio(await resumenEspacio())); } catch (err) { el.append(h(`<div class="tarjeta sub">Para ver el espacio usado, ejecuta el SQL 09 en Supabase.</div>`)); }
+  const [aj, uso] = await Promise.all([api.ajustes(), api.usoIA()]);
+  const A = Object.fromEntries(aj.map(r => [r.clave, r.valor]));
+  const gasto = uso.reduce((s, r) => s + Number(r.costo_usd || 0), 0);
+  const c = h(`<div class="tarjeta"><h2 style="margin-top:0">Inteligencia artificial</h2>
+    <p class="sub">Interruptor general: al apagarlo, ninguna función de IA se ejecuta en toda la plataforma y no hay gasto.</p>
+    <label class="interruptor"><input type="checkbox" ${A.ia_activa === true ? 'checked' : ''}> <b>Corrección automática de escritura con IA</b></label>
+    <div class="campo" style="max-width:260px;margin-top:14px"><label>Tope de gasto mensual (USD)</label><input type="number" min="0" step="0.5" value="${Number(A.ia_tope_mensual_usd ?? 5)}"></div>
+    <p>Gasto de este mes: <b>$${gasto.toFixed(4)}</b> · ${uso.length} correcciones</p>
+    <p class="sub">Requiere la clave de Anthropic guardada como secreto en Supabase (ANTHROPIC_API_KEY) y la función «corregir» desplegada. Las correcciones quedan en «Por revisar» para que las confirmes.</p>
+    <div class="acciones"><button class="btn" type="button">Guardar</button></div><p class="ok-msg"></p></div>`);
+  c.querySelector('button').onclick = async () => {
+    await api.guardarAjuste('ia_activa', c.querySelector('[type=checkbox]').checked);
+    await api.guardarAjuste('ia_tope_mensual_usd', Number(c.querySelector('[type=number]').value || 0));
+    c.querySelector('.ok-msg').textContent = 'Guardado ✓';
+  };
+  el.append(c);
+}
+let iaActivaCache = null;
+async function iaActiva() {
+  if (iaActivaCache !== null) return iaActivaCache;
+  try { const aj = await api.ajustes(); iaActivaCache = aj.find(r => r.clave === 'ia_activa')?.valor === true; } catch { iaActivaCache = false; }
+  return iaActivaCache;
+}
+
+// ================================================================ examen de suficiencia (tipo ТРКИ)
+const PARTES = [
+  ['lexico', 'Léxico y gramática', 30], ['lectura', 'Lectura', 25], ['audicion', 'Comprensión auditiva', 20],
+  ['escritura', 'Expresión escrita', 30], ['oral', 'Expresión oral', 15]];
+const NOTA_MINIMA = 66;
+
+
+// Arma una prueba de 5 partes a partir de los bancos de preguntas del nivel.
+// Nivel de cada ejercicio: el de su lección; si no tiene lección (bancos de práctica), el nivel más alto de sus reglas.
+async function generarExamen(nivel, opc = {}) {
+  const [ints, evs] = await Promise.all([api.misIntentos(), api.misEventos()]);
+  const { m } = await cargarModelo(ints, evs);
+  const NIV = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+  const nivEsc = Object.fromEntries(m.esc.map(s => [s.id, s.nivel || 'A1']));
+  const nivEj = e => e.escenario ? nivEsc[e.escenario] || 'A1' : (e.reqG || []).map(g => m.regla[g]?.nivel || 'A1').sort((x, y) => NIV.indexOf(y) - NIV.indexOf(x))[0] || 'A1';
+  const del = m.ejs.filter(e => nivEj(e) === nivel);
+  const cont = e => { try { return typeof e.contenido === 'string' ? JSON.parse(e.contenido) : e.contenido; } catch { return {}; } };
+  const cerradas = e => (cont(e).items || []).filter(i => ['choice', 'input'].includes(i.tipo) && !i.img);
+  // léxico y gramática: preguntas sueltas de los bancos de vocabulario y gramática, como máximo 2 por ejercicio para variar los temas
+  const lex = barajar(del.filter(e => ['vocabulario', 'gramática'].includes(e.hab) && !e.material && !cont(e).texto && cerradas(e).length))
+    .flatMap(e => barajar(cerradas(e)).slice(0, 2).map(i => ({ ...i, de: e.id, instr: e.instrucciones || '' })));
+  const lexico = lex.slice(0, opc.lexico || 30);
+  const elegir = (hab, n) => barajar(del.filter(e => e.hab === hab && e.material && (cont(e).items || []).some(i => ['choice', 'input'].includes(i.tipo)))).slice(0, n).map(e => e.id);
+  const abiertas = (oral) => barajar(del.filter(e => cont(e).tipo === 'abierta' && (oral ? ORALES.has(e.tipo_ejercicio) : !ORALES.has(e.tipo_ejercicio)))).slice(0, 1).map(e => e.id);
+  return { lexico: { items: lexico }, lectura: elegir('lectura', 2), audicion: elegir('escucha', 2), escritura: abiertas(false), oral: abiertas(true) };
+}
+
+async function vExamen() {
+  nav('inicio');
+  const nivel = new URLSearchParams(location.hash.split('?')[1] || '').get('nivel') || 'A1';
+  const previos = await api.examenes();
+  const enCurso = previos.find(x => x.estado === 'en_curso' && x.nivel === nivel);
+  if (!enCurso) {
+    $app.innerHTML = `<div class="migas"><a href="#/">← Inicio</a></div><div class="tarjeta"><h1 style="margin-top:0">Examen de suficiencia · nivel ${esc(nivel)}</h1>
+      <p>El examen tiene 5 partes, como el ТРКИ: ${PARTES.map(p => `<b>${p[1]}</b> (${p[2]} min)`).join(', ')}. Para aprobar necesitas al menos <b>${NOTA_MINIMA} %</b> en cada parte.</p>
+      <h3>Vigilancia automática</h3><ul>
+      <li>Se usa tu cámara durante todo el examen y se guardan fotos cada minuto para revisión. Las fotos se borran automáticamente 30 días después del examen (plazo para revisión o apelación).</li>
+      <li>El examen se hace en pantalla completa. Salir de ella, cambiar de pestaña o abrir otro programa queda registrado como incidencia.</li>
+      <li>No se puede copiar ni pegar. No uses diccionarios, traductores ni ayuda de otras personas.</li>
+      <li>Usa una computadora con cámara, en un lugar tranquilo y con buena luz. Las partes escrita y oral las califica tu profesora.</li></ul>
+      <label class="sub" style="display:flex;gap:8px"><input type="checkbox" id="acepto" style="width:auto"> Acepto las condiciones y la grabación de fotos de la cámara durante el examen.</label>
+      <p class="error"></p><div class="acciones"><button class="btn" type="button" disabled>Empezar examen</button></div></div>`;
+    const bt = $app.querySelector('.acciones .btn'), ch = $app.querySelector('#acepto');
+    ch.onchange = () => bt.disabled = !ch.checked;
+    bt.onclick = async () => {
+      bt.disabled = true;
+      try {
+        const preguntas = await generarExamen(nivel);
+        if (!preguntas.lexico.items.length) throw new Error('Aún no hay suficiente contenido de este nivel para armar el examen.');
+        await api.crearExamen({ nivel, preguntas, respuestas: {}, notas: {} });
+        await api.registrar('examen', [nivel]).catch(() => {});
+        vExamen();
+      } catch (err) { $app.querySelector('.error').textContent = err.message || 'No se pudo iniciar.'; bt.disabled = false; }
+    };
+    return;
+  }
+  return correrExamen(enCurso);
+}
+
+async function correrExamen(ex) {
+  const vig = await iniciarVigilancia(ex);
+  const resp = ex.respuestas || {};
+  const pendientes = PARTES.filter(([k]) => !(k in resp));
+  if (!pendientes.length) return entregarExamen(ex, vig);
+  const [k, titulo, minutos] = pendientes[0];
+  $app.innerHTML = `<div class="examen-cab"><b>${esc(titulo)}</b> · parte ${PARTES.findIndex(p => p[0] === k) + 1} de 5 <span class="reloj"></span></div>`;
+  const cont = h(`<div></div>`); $app.append(cont);
+  const bloques = [];
+  if (k === 'lexico') {
+    // preguntas agrupadas por ejercicio de origen, cada grupo con su instrucción
+    const grupos = new Map();
+    for (const i of ex.preguntas.lexico.items) { const g = i.de || '_'; if (!grupos.has(g)) grupos.set(g, []); grupos.get(g).push(i); }
+    const card = h(`<div class="tarjeta"><p class="instr">Elige o escribe la respuesta correcta.</p></div>`);
+    let n = 0;
+    for (const [, its] of grupos) {
+      const r = rItems({ items: its });
+      const g = h(`<div class="grupo-lex"><p class="sub"><b>${its.length > 1 ? `${n + 1}–${n + its.length}` : n + 1}.</b> ${esc(its[0].instr || '')}</p></div>`); n += its.length;
+      g.append(r.el); card.append(g); bloques.push(r);
+    }
+    cont.append(card);
+    if (card.querySelector('input[type=text]')) card.append(tecladoRuso(card));
+  } else {
+    for (const id of ex.preguntas[k] || []) {
+      const ej = await api.ejercicio(id); const c = typeof ej.contenido === 'string' ? JSON.parse(ej.contenido) : ej.contenido;
+      const card = h(`<div class="tarjeta"><p class="instr">${esc(ej.instrucciones)}</p><div class="media"></div><div class="cuerpo"></div></div>`);
+      for (const m of await api.materiales(ids(ej.material))) card.querySelector('.media').append(await bloqueMaterial(m, true));
+      const r = await renderizar(ej); card.querySelector('.cuerpo').append(r.el); bloques.push(r); cont.append(card);
+      if (card.querySelector('input[type=text], textarea')) card.append(tecladoRuso(card));
+      setTimeout(() => resolverImgs(card), 0);
+    }
+    if (!bloques.length) cont.append(h(`<div class="tarjeta">Esta parte no tiene preguntas en este nivel todavía; se califica con la profesora.</div>`));
+  }
+  const acc = h(`<div class="acciones"><button class="btn" type="button">Terminar esta parte →</button></div><p class="error"></p>`); cont.append(acc);
+  const fin = Date.now() + minutos * 60000;
+  const reloj = $app.querySelector('.reloj');
+  const tick = setInterval(() => { const s = Math.max(0, Math.round((fin - Date.now()) / 1000)); reloj.textContent = `⏱ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; if (!s) terminar(true); }, 1000);
+  let hecho = false;
+  async function terminar(porTiempo = false) {
+    if (hecho) return; hecho = true; clearInterval(tick);
+    const out = [];
+    for (const b of bloques) { try { out.push(await b.corregir()); } catch (e) { out.push({ vacio: true, error: e.message }); } }
+    const auto = out.filter(o => !o.abierta && o.total);
+    const bien = auto.reduce((s, o) => s + o.bien, 0), total = auto.reduce((s, o) => s + o.total, 0);
+    resp[k] = { porTiempo, auto: total ? Math.round(100 * bien / total) : null, abiertas: out.filter(o => o.abierta).map(o => ({ texto: o.respuesta?.texto || '', audio: o.audio || null })) };
+    await api.actualizarExamen(ex.id, { respuestas: resp, incidencias: vig.incidencias });
+    ex.respuestas = resp; correrExamen(ex);
+  }
+  acc.querySelector('button').onclick = () => terminar(false);
+}
+
+async function iniciarVigilancia(ex) {
+  if (window.__vig && window.__vig.id === ex.id) return window.__vig;
+  const vig = { id: ex.id, incidencias: ex.incidencias || [], stream: null, timer: null };
+  const nota = (tipo) => { vig.incidencias.push({ tipo, t: new Date().toISOString() }); };
+  try {
+    vig.stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 }, audio: false });
+    const v = h(`<video class="cam" autoplay muted playsinline></video>`); v.srcObject = vig.stream; document.body.append(v);
+    const foto = async () => {
+      try {
+        const cv = document.createElement('canvas'); cv.width = 320; cv.height = 240; cv.getContext('2d').drawImage(v, 0, 0, 320, 240);
+        const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.6));
+        await api.subirFotoExamen(blob, `${sesion.user.id}/${ex.id}/${Date.now()}.jpg`);
+      } catch (e) { nota('foto_fallida'); }
+    };
+    setTimeout(foto, 3000); vig.timer = setInterval(foto, 60000);
+    vig.stream.getVideoTracks()[0].onended = () => nota('camara_apagada');
+  } catch (e) { nota('sin_camara'); }
+  try { await document.documentElement.requestFullscreen?.(); } catch (e) { nota('sin_pantalla_completa'); }
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) nota('salio_de_pantalla_completa'); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) nota('cambio_de_pestana_o_programa'); });
+  window.addEventListener('blur', () => nota('ventana_sin_foco'));
+  ['copy', 'paste', 'cut', 'contextmenu'].forEach(t => document.addEventListener(t, e => { if (window.__vig) { e.preventDefault(); nota('intento_' + t); } }));
+  window.__vig = vig; return vig;
+}
+
+async function entregarExamen(ex, vig) {
+  clearInterval(vig?.timer); vig?.stream?.getTracks().forEach(t => t.stop()); document.querySelector('.cam')?.remove();
+  try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (e) {}
+  window.__vig = null;
+  const notas = Object.fromEntries(PARTES.map(([k]) => [k, ex.respuestas[k]?.auto ?? null]));
+  await api.actualizarExamen(ex.id, { estado: 'entregado', entregado_en: new Date().toISOString(), notas, incidencias: vig?.incidencias || [] });
+  $app.innerHTML = `<div class="tarjeta"><h1 style="margin-top:0">Examen entregado ✓</h1>
+    <p>Resultados automáticos: ${PARTES.filter(([k]) => notas[k] != null).map(([k, t]) => `${t}: <b>${notas[k]} %</b>`).join(' · ') || '—'}.</p>
+    <p>Tu profesora calificará la expresión escrita y oral y revisará la vigilancia. Si apruebas todas las partes con ${NOTA_MINIMA} % o más, tu certificado aparecerá en tu inicio.</p>
+    <a class="btn" href="#/">Volver al inicio</a></div>`;
+}
+
+async function tExamenes(el) {
+  const [exs, ps] = await Promise.all([api.examenes(true), api.alumnos()]);
+  const nombre = id => ps.find(p => p.id === id)?.nombre || id.slice(0, 8);
+  if (!exs.length) { el.append(h(`<div class="tarjeta">Aún no hay exámenes.</div>`)); return; }
+  for (const ex of exs) {
+    const n = ex.notas || {};
+    const card = h(`<div class="tarjeta"><div class="etq">${esc(nombre(ex.usuario))} · nivel ${esc(ex.nivel)} · ${esc(ex.estado)} · ${new Date(ex.iniciado_en).toLocaleString()}</div>
+      <p class="sub">Incidencias de vigilancia: ${(ex.incidencias || []).length ? esc([...new Set((ex.incidencias || []).map(i => i.tipo))].map(t => `${t} ×${ex.incidencias.filter(i => i.tipo === t).length}`).join(' · ')) : 'ninguna'}</p>
+      <div class="fotos"></div><div class="abiertas"></div>
+      <div class="notas">${PARTES.map(([k, t]) => `<label>${t}<input type="number" min="0" max="100" data-k="${k}" value="${n[k] ?? ''}"></label>`).join('')}</div>
+      <div class="acciones"><button class="btn" type="button">Guardar calificación</button><button class="btn sec" type="button" data-anular>Anular</button><button class="btn sec" type="button" data-fotos>Ver fotos de cámara</button></div><p class="ok-msg"></p></div>`);
+    for (const k of ['escritura', 'oral']) for (const a of ex.respuestas?.[k]?.abiertas || []) {
+      const d = h(`<div class="regla"><b>${k === 'oral' ? 'Expresión oral' : 'Expresión escrita'}</b>${a.texto ? `<div class="texto-ru">${esc(a.texto)}</div>` : ''}</div>`);
+      if (a.audio) { const u = await api.url('grabaciones', a.audio); if (u) d.append(h(`<audio controls src="${esc(u)}"></audio>`)); }
+      card.querySelector('.abiertas').append(d);
+    }
+    card.querySelector('[data-fotos]').onclick = async e => {
+      e.target.disabled = true;
+      const fs = await api.fotosExamen(ex.usuario, ex.id);
+      for (const u of fs) card.querySelector('.fotos').append(h(`<img src="${esc(u)}" alt="" class="foto-cam">`));
+      if (!fs.length) card.querySelector('.fotos').append(h(`<p class="sub">Sin fotos. Se borran automáticamente 30 días después del examen.</p>`));
+    };
+    card.querySelector('.acciones .btn').onclick = async () => {
+      const notas = {}; card.querySelectorAll('[data-k]').forEach(i => notas[i.dataset.k] = i.value === '' ? null : Number(i.value));
+      const completas = PARTES.every(([k]) => notas[k] != null);
+      const aprobado = completas && PARTES.every(([k]) => notas[k] >= NOTA_MINIMA);
+      await api.actualizarExamen(ex.id, { notas, aprobado: completas ? aprobado : null, estado: completas ? 'calificado' : ex.estado, calificado_en: completas ? new Date().toISOString() : null });
+      card.querySelector('.ok-msg').textContent = completas ? (aprobado ? 'Aprobado ✓ — el certificado se emitió automáticamente.' : 'Calificado: no aprobado.') : 'Notas guardadas (faltan partes).';
+    };
+    card.querySelector('[data-anular]').onclick = async () => { await api.actualizarExamen(ex.id, { estado: 'anulado' }); card.querySelector('.ok-msg').textContent = 'Examen anulado.'; };
+    el.append(card);
+  }
+}
+
+// ================================================================ certificados
+async function vCertificado(codigo) {
+  nav('inicio');
+  const cs = await api.certificados();
+  const c = cs.find(x => x.codigo === codigo);
+  if (!c) { $app.innerHTML = `<div class="tarjeta">Certificado no encontrado.</div>`; return; }
+  const url = `${location.origin}${location.pathname}#/verificar/${c.codigo}`;
+  const n = c.notas || {};
+  $app.innerHTML = `<div class="migas no-imprimir"><a href="#/">← Inicio</a> · <a href="javascript:print()">Imprimir o guardar como PDF</a></div>
+    <div class="certificado"><div class="sello">🎓</div><p class="cert-escuela">${esc(NOMBRE_CURSO)}</p><h1>Certificado de nivel ${esc(c.nivel)}</h1>
+    <p>Se certifica que</p><p class="cert-nombre">${esc(c.nombre)}</p>
+    <p>aprobó el examen de suficiencia de lengua rusa de nivel <b>${esc(c.nivel)}</b> (Marco Común Europeo de Referencia), con al menos ${NOTA_MINIMA} % en cada parte:</p>
+    <p class="cert-notas">${PARTES.map(([k, t]) => `${t}: <b>${n[k] ?? '—'} %</b>`).join(' · ')}</p>
+    <p>Emitido el ${new Date(c.emitido_en + 'T12:00:00').toLocaleDateString('es', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+    <p class="sub">Código de verificación: <b>${esc(c.codigo)}</b> · ${esc(url)}</p>
+    <p class="sub">Certificado privado emitido por la escuela. No equivale al examen estatal ТРКИ ni a un título oficial.</p></div>`;
+}
+
+async function vVerificar(codigo = '') {
+  nav();
+  $app.innerHTML = `<div class="tarjeta login"><h1>Verificar certificado</h1><div class="campo"><label>Código</label><input value="${esc(codigo)}" placeholder="RU-A1-XXXXXX"></div>
+    <button class="btn" type="button">Verificar</button><div class="res"></div></div>`;
+  const ir = async () => {
+    const res = $app.querySelector('.res'); res.textContent = '…';
+    try {
+      const r = await api.verificar($app.querySelector('input').value);
+      res.innerHTML = r ? `<div class="resultado ok">✓ Válido: <b>${esc(r.nombre)}</b> · nivel ${esc(r.nivel)} · emitido el ${esc(r.emitido_en)}</div>` : `<div class="resultado mal">No existe un certificado con ese código.</div>`;
+    } catch (e) { res.innerHTML = `<div class="resultado mal">No se pudo verificar ahora.</div>`; }
+  };
+  $app.querySelector('button').onclick = ir; if (codigo) ir();
+}
+
+async function router() {
+  const [, r, p] = location.hash.split('?')[0].replace(/^#\/?/, '#/').split('/');
+  try {
+    if (r === 'verificar') return await vVerificar(decodeURIComponent(p || ''));
+    if (r === 'nueva-clave') return vNuevaClave();
+    if (!sesion) {
+      if (r === 'registro') return vRegistro();
+      if (r === 'recuperar') return vRecuperar();
+      if (r === 'entrar') return vLogin();
+      return vPublico();
+    }
+    botonReporte();
+    if (r === 'planes') return vPublico();
+    if (r === 'examen') return await vExamen();
+    if (r === 'certificado' && p) return await vCertificado(p);
+    if (['entrar', 'registro', 'recuperar'].includes(r)) { location.hash = '#/'; return; }
+    if (r === 'salir') { await api.logout(); sesion = null; perfil = null; document.getElementById('reportar')?.remove(); location.hash = '#/'; return vPublico(); }
     if (r === 'e' && p) return await vEscenario(p);
     if (r === 'x' && p) return await vEjercicio(p);
     if (r === 'docente') return await vDocente(p || 'alumnos');
