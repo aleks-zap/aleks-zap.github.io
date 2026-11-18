@@ -183,3 +183,11 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .fila.ordenable .flechas .btn{padding:4px 10px}
 .fila.arrastrando{opacity:.4}
 .fila.destino{outline:2px dashed var(--acento2)}
+.item-escrito{margin:12px 0;padding-bottom:10px;border-bottom:1px dashed var(--linea)}
+.item-escrito textarea{min-height:70px}
+.pron{margin-top:10px}
+.pron-palabras span{padding:1px 4px;border-radius:4px;font-size:18px}
+.pron-palabras .bien{background:#dff3e6}
+.pron-palabras .regular{background:#fbefc9}
+.pron-palabras .mal{background:#f8d7d3}
+.pron-palabras .omitida{color:var(--suave);text-decoration:line-through}

@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_KEY, NOMBRE_CURSO, PLANES } from './config.js';
-import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, resumenPalabras, proyeccion, textoProyeccion, seleccionActiva, sortearPreguntas, itemDeRef, ORALES, HABILIDADES, HABILIDAD } from './motor.js';
+import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, resumenPalabras, proyeccion, textoProyeccion, seleccionActiva, sortearPreguntas, itemDeRef, ORALES, HABILIDADES, HABILIDAD, EJ_REPASO, palabrasEnTexto, fechaLocal } from './motor.js';
 let vocabCache = null, formasCache = null;
 let reglasCache = null;
 
@@ -45,6 +45,8 @@ async function crearSupabase() {
     async espacio() { return ok(await sb.rpc('espacio_usado')); },
     async guardarAjuste(clave, valor) { ok(await sb.from('ajustes').upsert({ clave, valor })); },
     async usoIA() { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return ok(await sb.from('uso_ia').select('costo_usd').gte('creado_en', d.toISOString())); },
+    async generarRepaso(datos) { const r = await sb.functions.invoke('corregir', { body: { accion: 'generar', ...datos } }); if (r.error) throw r.error; if (!r.data?.items) throw new Error(r.data?.omitido || r.data?.error || 'sin tarea'); return r.data; },
+    async evaluarPronunciacion(audio, texto) { const r = await sb.functions.invoke('pronunciacion', { body: { audio, texto } }); if (r.error) throw r.error; return r.data; },
     async corregirIA(intento_id) { const r = await sb.functions.invoke('corregir', { body: { intento_id } }); if (r.error) throw r.error; return r.data; },
     async examenes(todos = false) { let q = sb.from('examenes').select('*').order('iniciado_en', { ascending: false }); if (!todos) q = q.eq('usuario', sesion.user.id); return ok(await q); },
     async crearExamen(o) { return ok(await sb.from('examenes').insert(o).select().single()); },
@@ -139,8 +141,10 @@ async function crearDemo() {
     async login() {}, async logout() {},
     async registro() { return { session: null }; }, async recuperar() {}, async nuevaClave() {},
     async reportar(o) { console.log('reporte', o); }, async reportes() { return []; }, async resolverReporte() {},
-    async ajustes() { return [{ clave: 'ia_activa', valor: false }, { clave: 'ia_tope_mensual_usd', valor: 5 }]; },
-    async espacio() { return [{ tipo: 'base', nombre: 'base de datos', bytes: 61e6 }, { tipo: 'archivos', nombre: 'materiales', bytes: 640e6, archivos: 352 }, { tipo: 'archivos', nombre: 'grabaciones', bytes: 95e6, archivos: 40 }, { tipo: 'archivos', nombre: 'examenes', bytes: 110e6, archivos: 300 }]; }, async guardarAjuste() {}, async usoIA() { return []; }, async corregirIA() { return {}; },
+    async evaluarPronunciacion() { return { total: 82, exactitud: 85, fluidez: 78, completitud: 100, palabras: [{ palabra: 'привет', nota: 92, error: 'None' }, { palabra: 'меня', nota: 64, error: 'Mispronunciation' }, { palabra: 'зовут', nota: 88, error: 'None' }] }; },
+    async generarRepaso(d0) { return { enunciado: 'Responde las preguntas con frases completas.', items: [{ pregunta: 'Какой у тебя дом?', palabras: d0.palabras.slice(0, 2).map(p => p.lema) }, { pregunta: 'Ты работаешь?', palabras: d0.palabras.slice(2).map(p => p.lema) }] }; },
+    async ajustes() { return [{ clave: 'ia_activa', valor: new URLSearchParams(location.search).has('ia') }, { clave: 'pronunciacion_activa', valor: new URLSearchParams(location.search).has('pron') }, { clave: 'ia_tope_mensual_usd', valor: 5 }]; },
+    async espacio() { return [{ tipo: 'base', nombre: 'base de datos', bytes: 61e6 }, { tipo: 'archivos', nombre: 'materiales', bytes: 640e6, archivos: 352 }, { tipo: 'archivos', nombre: 'grabaciones', bytes: 95e6, archivos: 40 }, { tipo: 'archivos', nombre: 'examenes', bytes: 110e6, archivos: 300 }]; }, async guardarAjuste() {}, async usoIA() { return []; }, async corregirIA() { return { puntaje: 100, feedback: '¡Muy bien! Sin errores.', errores: [] }; },
     async examenes() { return JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); },
     async crearExamen(o) { const l = JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); const x = { id: Date.now(), estado: 'en_curso', incidencias: [], iniciado_en: new Date().toISOString(), ...o }; l.unshift(x); sessionStorage.setItem('demo_examenes', JSON.stringify(l)); return x; },
     async actualizarExamen(id, o) { const l = JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); const x = l.find(e => e.id === id); Object.assign(x, o); sessionStorage.setItem('demo_examenes', JSON.stringify(l)); },
@@ -348,6 +352,24 @@ async function rOral(c, ej) {
   }
   el.append(h(`<p class="sub">Escucha el audio, repite en voz alta y grábate. Tu profesor escuchará la grabación.</p>`));
   const g = crearGrabador(); el.append(g.el);
+  if (await pronunciacionActiva()) {
+    const ref = c.tipo === 'repetir' ? c.elementos.join(' ') : [...el.querySelectorAll('.texto-ru')].map(x => x.textContent).join(' ');
+    const caja = h(`<div class="pron"><button class="btn sec" type="button">📊 Evaluar mi pronunciación</button><div class="pron-res"></div></div>`);
+    caja.querySelector('button').onclick = async ev => {
+      const res = caja.querySelector('.pron-res');
+      if (!g.blob) { res.innerHTML = '<p class="sub">Primero grábate.</p>'; return; }
+      ev.target.disabled = true; res.innerHTML = '<p class="sub">Evaluando… ⏳</p>';
+      try {
+        const r = await api.evaluarPronunciacion(await aWav16k(g.blob), ref.replace(/\u0301/g, ''));
+        if (!r?.palabras) { res.innerHTML = `<p class="sub">No se pudo evaluar${r?.omitido ? ': ' + esc(r.omitido) : ''}.</p>`; }
+        else res.innerHTML = `<p><b>Pronunciación: ${r.total} %</b> <span class="sub">· exactitud ${r.exactitud} · fluidez ${r.fluidez} · completitud ${r.completitud}</span></p>
+          <p class="pron-palabras">${r.palabras.map(w => `<span class="${w.error === 'Omission' ? 'omitida' : w.nota >= 80 ? 'bien' : w.nota >= 60 ? 'regular' : 'mal'}" title="${w.nota} %">${esc(w.palabra)}</span>`).join(' ')}</p>
+          <p class="sub">Verde: bien · amarillo: mejorable · rojo: repítela · tachada: no se oyó.</p>`;
+      } catch (e) { res.innerHTML = '<p class="sub">No se pudo evaluar ahora. Tu profesora escuchará la grabación.</p>'; }
+      ev.target.disabled = false;
+    };
+    el.append(caja);
+  }
   return { el, abierta: true, async corregir() {
     const audio = g.blob ? await api.subirGrabacion(g.blob) : null;
     return { abierta: true, respuesta: { grabada: !!audio }, audio };
@@ -559,13 +581,14 @@ async function cargarModelo(intentos, eventos, oralesZoom = false) {
   const [escenarios, ejercicios, tipos, temas, reglas, voc, formas] = await Promise.all([api.todosEscenarios(), api.ejerciciosLigeros(), api.tipos(), api.temas(),
     reglasCache || api.reglas(), vocabCache || api.vocabUso(), formasCache || fetch('formas.json').then(r => r.ok ? r.json() : { f: {}, m: {} }).catch(() => ({ f: {}, m: {} }))]);
   reglasCache = reglas; vocabCache = voc; formasCache = formas;
+  const ia = perfil?.rol === 'docente' ? false : await iaActiva();
   const vocab = Object.fromEntries(voc.map(v => [v.id, v]));
   if (enPrueba()) {                                                        // prueba gratis: solo la primera lección
     const esc0 = escenarios.filter(s => s.id === LECCION_PRUEBA);
     const ej0 = ejercicios.filter(e => e.escenario === LECCION_PRUEBA);
-    return { m: prepararModelo({ escenarios: esc0, ejercicios: ej0, tipos, intentos, eventos, reglas, temas, formas, vocab, oralesZoom }), escenarios, vocab };
+    return { m: prepararModelo({ escenarios: esc0, ejercicios: ej0, tipos, intentos, eventos, reglas, temas, formas, vocab, oralesZoom, iaActiva: ia }), escenarios, vocab };
   }
-  return { m: prepararModelo({ escenarios, ejercicios, tipos, intentos, eventos, reglas, temas, formas, vocab, oralesZoom }), escenarios, vocab };
+  return { m: prepararModelo({ escenarios, ejercicios, tipos, intentos, eventos, reglas, temas, formas, vocab, oralesZoom, iaActiva: ia }), escenarios, vocab };
 }
 
 // Modo ejercicio: tras empezar, las tareas siguen una tras otra hasta que el alumno sale o recarga la página
@@ -695,7 +718,7 @@ async function vInicio() {
   }
   const card = h(`<div class="tarjeta"></div>`);
   const filaAct = est.actual ? est.fila[est.actual] : null;
-  if (filaAct && !['elegir', 'fin', 'repasoDia', 'tarjetas', 'descanso'].includes(sig.tipo)) card.append(h(`<div class="etq">${esc(filaAct.s.nombre)} · ${filaAct.hechos} de ${filaAct.total}</div>`));
+  if (filaAct && !['elegir', 'fin', 'repasoDia', 'tarjetas', 'descanso', 'repasoEscrito'].includes(sig.tipo)) card.append(h(`<div class="etq">${esc(filaAct.s.nombre)} · ${filaAct.hechos} de ${filaAct.total}</div>`));
   if (sig.tipo === 'descanso') {
     card.append(h(`<p class="instr">¡Buen trabajo por hoy! 💪</p>`));
     card.append(h(`<p>Tienes bastante vocabulario y gramática por repasar, así que por hoy no agregamos material nuevo: así lo que aprendiste se queda contigo. Mañana empezarás con el repaso y luego seguirás avanzando.</p>`));
@@ -733,6 +756,21 @@ async function vInicio() {
     card.append(h(`<div class="etq">Repaso de hoy · ${sig.k} de ${sig.n}</div>`));
     card.append(h(`<div>${cabeceraEj(e0, e0.hab)}</div>`));
     card.append(h(`<div class="acciones"><a class="btn" data-flujo href="#/x/${e0.id}">Empezar →</a></div>`));
+  } else if (sig.tipo === 'repasoEscrito') {
+    card.append(h(`<div class="etq">Repaso de hoy · escritura</div>`));
+    if (sig.generado) { try { repasoEscrito(card, JSON.parse(sig.generado), sig.ids, m, vocab); } catch { card.append(h(`<p class="error">No se pudo leer la tarea.</p>`)); } }
+    else {
+      card.append(h(`<p class="sub">Preparando tu tarea de escritura… ⏳</p>`));
+      const hoyS = fechaLocal();
+      const pal = sig.ids.filter(x => /^V/.test(x)).map(id => ({ id, lema: vocab[id]?.lema || id, traduccion: vocab[id]?.traduccion || '' }));
+      const reg = sig.ids.filter(x => /^[GP]/.test(x)).map(id => ({ id, nombre: m.regla[id]?.nombre || id }));
+      const conocidas = [...m.conocidos].filter(x => /^V/.test(x) && vocab[x]).map(x => vocab[x].lema).slice(0, 1500);
+      const reglasConocidas = [...m.conocidos].filter(x => /^G/.test(x) && m.regla[x]).map(x => m.regla[x].nombre).slice(0, 80);
+      api.generarRepaso({ palabras: pal, reglas: reg, conocidas, reglasConocidas })
+        .then(t => api.registrar('escrito', [`${hoyS}|${JSON.stringify(t)}`]))
+        .catch(() => api.registrar('escrito', [`${hoyS}|{"fallo":true}`]).catch(() => {}))
+        .finally(() => vInicio());
+    }
   } else if (sig.tipo === 'tarjetas') {
     card.append(h(`<div class="etq">Repaso de hoy · palabras</div>`));
     card.append(tarjetasRepaso(sig.items, vocab));
@@ -743,7 +781,7 @@ async function vInicio() {
     card.append(h(`<div class="acciones"><a class="btn" data-flujo href="#/x/${e0.id}">Empezar →</a></div>`));
   }
   $app.append(card);
-  if (enFlujo && ['regla', 'palabras', 'tarjetas', 'elegir'].includes(sig.tipo)) {     // en modo ejercicio: solo la tarea, sin el resto del inicio
+  if (enFlujo && ['regla', 'palabras', 'tarjetas', 'elegir', 'repasoEscrito'].includes(sig.tipo)) {     // en modo ejercicio: solo la tarea, sin el resto del inicio
     $app.innerHTML = ''; $app.append(h(`<div class="migas"><a href="#/">← Salir</a></div>`), card); return;
   }
 
@@ -880,6 +918,7 @@ async function vEjercicio(id) {
           try {
             const r = await api.corregirIA(guardado.id);
             espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div></div>`) : h(`<div class="resultado pend">Enviado. Tu profesora lo revisará y verás sus comentarios aquí.</div>`));
+            if (r?.feedback) registrarProduccion(out.respuesta.texto, r.errores);
           } catch (e) { espera.textContent = 'Enviado. Tu profesora lo revisará y verás sus comentarios aquí.'; api.revisar(guardado.id, { estado: 'pendiente_docente' }).catch(() => {}); }
         } else res.append(h(`<div class="resultado pend">${out.audio || out.respuesta?.texto ? 'Enviado. Tu profesor lo revisará y verás sus comentarios aquí.' : 'Práctica registrada.'}</div>`));
       } else {
@@ -897,6 +936,46 @@ async function vEjercicio(id) {
       acc.append(h(`<a class="btn" data-flujo href="#/">Siguiente tarea →</a>`));
     } catch (err) { res.append(h(`<p class="error">${esc(err.message || 'No se pudo guardar. Revisa tu conexión.')}</p>`)); bEnviar.disabled = false; }
   };
+}
+
+// Repaso escrito generado con IA: preguntas o una tarea breve con palabras obligatorias; lo corrige la IA
+function repasoEscrito(card, t, ids, m, vocab) {
+  card.append(h(`<div><p class="instr">Repaso escrito</p><div class="cat-ej">escritura</div>${t.enunciado ? `<p class="enunciado">${esc(t.enunciado)}</p>` : ''}</div>`));
+  const cuerpo = h(`<div></div>`); card.append(cuerpo);
+  const resp = (t.items || []).map(it => {
+    const b = h(`<div class="item-escrito">${it.pregunta ? `<div class="texto-ru">${esc(it.pregunta)}</div>` : ''}<p class="sub">Palabras obligatorias: ${(it.palabras || []).map(w => `<b class="ru">${esc(w)}</b>`).join(', ')}</p><textarea rows="3" placeholder="Escribe en ruso"></textarea></div>`);
+    cuerpo.append(b); return b.querySelector('textarea');
+  });
+  cuerpo.after(tecladoRuso(card));
+  const res = h(`<div class="res"></div>`), acc = h(`<div class="acciones"><button class="btn" type="button">Enviar</button></div>`);
+  card.append(res, acc);
+  acc.querySelector('button').onclick = async ev => {
+    if (resp.some(r => !r.value.trim())) { res.innerHTML = '<p class="error">Responde todas las partes antes de enviar.</p>'; return; }
+    ev.target.disabled = true; res.innerHTML = '';
+    const texto = (t.items || []).map((it, i) => `${it.pregunta ? it.pregunta + '\n' : ''}${resp[i].value.trim()}`).join('\n\n');
+    const objetivos = ids.map(id => ({ id, nombre: /^V/.test(id) ? (vocab[id]?.lema || id) : (m.regla[id]?.nombre || id) }));
+    try {
+      const g = await api.guardarIntento({ ejercicio_id: EJ_REPASO, respuesta: { texto, tarea: t, objetivos }, audio_path: null, correcto: null, puntaje: null, estado: 'pendiente_ia' });
+      const espera = h(`<div class="resultado pend">Enviado. Revisando tu texto… ⏳</div>`); res.append(espera);
+      try {
+        const r = await api.corregirIA(g.id);
+        espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div></div>`) : h(`<div class="resultado pend">Enviado. Tu profesora lo revisará.</div>`));
+        await registrarProduccion(resp.map(x => x.value).join(' '), r?.errores, new Set(ids));
+      } catch (e) { espera.textContent = 'Enviado. Tu profesora lo revisará.'; api.revisar(g.id, { estado: 'pendiente_docente' }).catch(() => {}); }
+      acc.innerHTML = ''; acc.append(h(`<a class="btn" data-flujo href="#/">Siguiente tarea →</a>`));
+    } catch (e) { res.append(h(`<p class="error">${esc(e.message || 'No se pudo guardar.')}</p>`)); ev.target.disabled = false; }
+  };
+}
+// Palabras del curso que el alumno escribió en un texto corregido por IA: cuentan como producción para el repaso espaciado
+// (correctas si no aparecen dentro de un error; las palabras objetivo del repaso escrito las evalúa la IA aparte)
+async function registrarProduccion(texto, errores, excluir = new Set()) {
+  try {
+    const formas = formasCache || await fetch('formas.json').then(r => r.json());
+    const voc = vocabCache ? new Set(vocabCache.map(v => v.id)) : null;
+    const mal = new Set(palabrasEnTexto(formas, (errores || []).map(e => e.original).join(' ')));
+    const ids = palabrasEnTexto(formas, texto).filter(id => !excluir.has(id) && (!voc || voc.has(id)));
+    if (ids.length) await api.registrar('produccion', ids.map(id => `${id}|${mal.has(id) ? 0 : 1}|p`));
+  } catch (e) { /* sin conexión: no se registra */ }
 }
 
 // Cabecera de un ejercicio: título corto, categoría y enunciado (o solo la instrucción si aún no tiene título)
@@ -1065,7 +1144,8 @@ async function tAlumno(el, uid) {
   const zt = h(`<label style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" ${p.orales_zoom ? 'checked' : ''}> Parte oral por Zoom: los ejercicios orales no se le muestran y van a la lista de la clase</label>`);
   zt.querySelector('input').onchange = async e => { await api.actualizarPerfil(uid, { orales_zoom: e.target.checked }); location.reload(); };
   el.append(zt);
-  const PL = [['prueba', 'Prueba gratis (solo primera lección)'], ['plataforma', 'Plataforma'], ['zoom_grupal', 'Plataforma + Zoom grupal'], ['zoom_individual', 'Plataforma + Zoom individual'], ['completo', 'Acceso completo (sin vencimiento)']];
+  const PL = [['prueba', 'Prueba gratis (solo primera lección)'], ['plataforma', 'Esencial'], ['completo', 'Acceso completo (sin vencimiento)'],
+    ...[['zoom_grupal', 'Plataforma + Zoom grupal (anterior)'], ['zoom_individual', 'Plataforma + Zoom individual (anterior)']].filter(([k]) => p.plan === k)];
   const pf = h(`<div class="campo" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end"><div><label>Plan</label><select>${PL.map(([k, t]) => `<option value="${k}" ${p.plan === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
     <div><label>Pagado hasta</label><input type="date" value="${esc(p.plan_hasta || '')}"></div><button class="btn sec" type="button">Guardar plan</button></div>`);
   pf.querySelector('button').onclick = async () => { await api.actualizarPerfil(uid, { plan: pf.querySelector('select').value, plan_hasta: pf.querySelector('input').value || null }); pf.querySelector('button').textContent = 'Guardado ✓'; };
@@ -1482,15 +1562,15 @@ function vPublico() {
   const pl = PLANES.map(p => `<div class="plan ${p.destacado ? 'dest' : ''}"><h3>${esc(p.nombre)}</h3>
     <div class="precio">${esc(p.precio)}<span>${esc(p.periodo || '')}</span></div>${p.anual ? `<div class="sub">${esc(p.anual)}</div>` : ''}
     <ul>${p.incluye.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
-    ${p.pago ? `<a class="btn" href="${esc(p.pago)}" target="_blank" rel="noopener">Elegir</a>` : `<a class="btn sec" href="#/registro">Empieza gratis</a>`}</div>`).join('');
+    ${p.pronto ? `<span class="btn sec" aria-disabled="true" style="opacity:.6;cursor:default">Muy pronto</span>` : p.pago ? `<a class="btn" href="${esc(p.pago)}" target="_blank" rel="noopener">Elegir</a>` : `<a class="btn sec" href="#/registro">Empieza gratis</a>`}</div>`).join('');
   $app.innerHTML = `<section class="heroe"><h1>Aprende ruso desde cero, a tu ritmo</h1>
-    <p class="grande">Curso para hispanohablantes: lecciones cortas que se ordenan solas según lo que ya sabes, repaso inteligente de palabras y, si quieres, una clase semanal en vivo con tu profesora.</p>
+    <p class="grande">Curso para hispanohablantes: lecciones cortas que se ordenan solas según lo que ya sabes, repaso inteligente de palabras y corrección inmediata de lo que escribes.</p>
     <div class="acciones"><a class="btn" href="#/registro">Prueba gratis la primera lección</a><a class="btn sec" href="#/entrar">Ya tengo cuenta</a></div></section>
     <section class="ventajas">
       <div><b>🧭 Ruta personal</b><p>La plataforma decide la siguiente tarea según tu avance: nunca ves una palabra o regla que no te hayan enseñado.</p></div>
       <div><b>🔁 Repaso que no olvida</b><p>Cada día empiezas por lo que estás a punto de olvidar. Ves en cuántos días tendrás tu nivel.</p></div>
-      <div><b>🗣️ Hablar de verdad</b><p>Escritura y pronunciación con comentarios, y en los planes con clase, conversación semanal por Zoom.</p></div>
-      <div><b>📜 Certificado</b><p>Al dominar un nivel puedes rendir el examen tipo ТРКИ y recibir un certificado verificable en línea.</p></div>
+      <div><b>✍️ Escribir de verdad</b><p>Tus textos se corrigen al instante, y el repaso diario te pide usar en frases propias las palabras que estás a punto de olvidar.</p></div>
+      <div><b>📜 Certificado</b><p>Con el plan Pro (muy pronto): al dominar un nivel rindes un examen de 5 partes y recibes un certificado verificable en línea.</p></div>
     </section>
     <h2>Planes</h2><div class="planes">${pl}</div>
     <p class="sub">La prueba gratis incluye la primera lección completa: alfabeto, sonidos, saludos y presentaciones. No pedimos tarjeta.</p>
@@ -1632,17 +1712,41 @@ async function tAjustes(el) {
   const gasto = uso.reduce((s, r) => s + Number(r.costo_usd || 0), 0);
   const c = h(`<div class="tarjeta"><h2 style="margin-top:0">Inteligencia artificial</h2>
     <p class="sub">Interruptor general: al apagarlo, ninguna función de IA se ejecuta en toda la plataforma y no hay gasto.</p>
-    <label class="interruptor"><input type="checkbox" ${A.ia_activa === true ? 'checked' : ''}> <b>Corrección automática de escritura con IA</b></label>
+    <label class="interruptor"><input type="checkbox" ${A.ia_activa === true ? 'checked' : ''}> <b>IA activa: corrección de escritura y repasos escritos generados</b></label>
+    <label class="interruptor" style="margin-top:8px"><input type="checkbox" data-pron ${A.pronunciacion_activa === true ? 'checked' : ''}> <b>Piloto: evaluación de pronunciación con Azure</b> <span class="sub">(requiere AZURE_SPEECH_KEY y AZURE_SPEECH_REGION en Supabase y la función «pronunciacion»)</span></label>
     <div class="campo" style="max-width:260px;margin-top:14px"><label>Tope de gasto mensual (USD)</label><input type="number" min="0" step="0.5" value="${Number(A.ia_tope_mensual_usd ?? 5)}"></div>
     <p>Gasto de este mes: <b>$${gasto.toFixed(4)}</b> · ${uso.length} correcciones</p>
     <p class="sub">Requiere la clave de Anthropic guardada como secreto en Supabase (ANTHROPIC_API_KEY) y la función «corregir» desplegada. Las correcciones quedan en «Por revisar» para que las confirmes.</p>
     <div class="acciones"><button class="btn" type="button">Guardar</button></div><p class="ok-msg"></p></div>`);
   c.querySelector('button').onclick = async () => {
     await api.guardarAjuste('ia_activa', c.querySelector('[type=checkbox]').checked);
+    await api.guardarAjuste('pronunciacion_activa', c.querySelector('[data-pron]').checked); pronActivaCache = null;
     await api.guardarAjuste('ia_tope_mensual_usd', Number(c.querySelector('[type=number]').value || 0));
     c.querySelector('.ok-msg').textContent = 'Guardado ✓';
   };
   el.append(c);
+}
+let pronActivaCache = null;
+async function pronunciacionActiva() {
+  if (pronActivaCache !== null) return pronActivaCache;
+  try { const aj = await api.ajustes(); const A = Object.fromEntries(aj.map(r => [r.clave, r.valor])); pronActivaCache = A.ia_activa === true && A.pronunciacion_activa === true; } catch { pronActivaCache = false; }
+  return pronActivaCache;
+}
+// grabación del navegador (webm/ogg) → WAV PCM 16 kHz mono en base64, el formato que acepta Azure
+async function aWav16k(blob) {
+  const ctx = new AudioContext(); const buf = await ctx.decodeAudioData(await blob.arrayBuffer()); ctx.close();
+  const off = new OfflineAudioContext(1, Math.ceil(buf.duration * 16000), 16000);
+  const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+  const pcm = (await off.startRendering()).getChannelData(0);
+  const dv = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const str = (o, t) => [...t].forEach((ch, i) => dv.setUint8(o + i, ch.charCodeAt(0)));
+  str(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, 16000, true); dv.setUint32(28, 32000, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); str(36, 'data'); dv.setUint32(40, pcm.length * 2, true);
+  pcm.forEach((v, i) => dv.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 0x7fff, true));
+  const bytes = new Uint8Array(dv.buffer); let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
 }
 let iaActivaCache = null;
 async function iaActiva() {
@@ -1847,7 +1951,7 @@ async function vCertificado(codigo) {
     <p class="cert-notas">${PARTES.map(([k, t]) => `${t}: <b>${n[k] ?? '—'} %</b>`).join(' · ')}</p>
     <p>Emitido el ${new Date(c.emitido_en + 'T12:00:00').toLocaleDateString('es', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
     <p class="sub">Código de verificación: <b>${esc(c.codigo)}</b> · ${esc(url)}</p>
-    <p class="sub">Certificado privado emitido por la escuela. No equivale al examen estatal ТРКИ ni a un título oficial.</p></div>`;
+    <p class="sub">Este certificado acredita el nivel demostrado en el examen de la plataforma. No equivale al examen estatal ТРКИ: su aceptación para un trámite depende de la entidad que lo reciba.</p></div>`;
 }
 
 async function vVerificar(codigo = '') {
@@ -1858,7 +1962,7 @@ async function vVerificar(codigo = '') {
     const res = $app.querySelector('.res'); res.textContent = '…';
     try {
       const r = await api.verificar($app.querySelector('input').value);
-      res.innerHTML = r ? `<div class="resultado ok">✓ Válido: <b>${esc(r.nombre)}</b> · nivel ${esc(r.nivel)} · emitido el ${esc(r.emitido_en)}</div>` : `<div class="resultado mal">No existe un certificado con ese código.</div>`;
+      res.innerHTML = r ? `<div class="resultado ok">✓ Válido: <b>${esc(r.nombre)}</b> · nivel ${esc(r.nivel)} · emitido el ${esc(r.emitido_en)}</div><p class="sub">El certificado acredita el nivel demostrado en el examen de la plataforma. No equivale al examen estatal ТРКИ; cada entidad decide si lo acepta.</p>` : `<div class="resultado mal">No existe un certificado con ese código.</div>`;
     } catch (e) { res.innerHTML = `<div class="resultado mal">No se pudo verificar ahora.</div>`; }
   };
   $app.querySelector('button').onclick = ir; if (codigo) ir();
