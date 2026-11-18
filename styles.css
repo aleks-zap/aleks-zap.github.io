@@ -170,3 +170,6 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .espacio-b{height:12px;background:#eee8dc;border-radius:6px;overflow:hidden}.espacio-b div{height:100%;background:#4c8b5a}
 .espacio-b .alto{background:#d99a2b}.espacio-b .lleno{background:#b4372f}
 .aviso-espacio{border-left:4px solid #d99a2b;background:#fff8ec}
+.editor{border:2px solid var(--acento2)}
+.editor details summary{cursor:pointer}
+.editor .json{font-family:ui-monospace,monospace;font-size:13px}

@@ -106,6 +106,15 @@ async function crearSupabase() {
     },
     // ---- docente
     async upsert(tabla, filas) { ok(await sb.from(tabla).upsert(filas, { onConflict: 'id' })); },
+    async actualizar(tabla, id, cambios) {                // edición desde el panel docente
+      const r = ok(await sb.from(tabla).update(cambios).eq('id', id).select('id'));
+      if (!r.length) throw new Error('No se guardó (sin permiso o fila inexistente).');
+    },
+    async tablaCompleta(tabla) {                          // para descargar el contenido actual, en páginas de 1000
+      const out = [];
+      for (let i = 0; ; i += 1000) { const r = ok(await sb.from(tabla).select('*').order('id').range(i, i + 999)); out.push(...r); if (r.length < 1000) break; }
+      return out;
+    },
     async subirMedio(file, path) { ok(await sb.storage.from('materiales').upload(path, file, { upsert: true, contentType: file.type || undefined })); },
     async alumnos() { return ok(await sb.from('perfiles').select('*').order('nombre')); },
     async renombrar(id, nombre) { ok(await sb.from('perfiles').update({ nombre }).eq('id', id)); },
@@ -154,6 +163,8 @@ async function crearDemo() {
     async guardarIntento(o) { intentos.push({ ...o, creado_en: new Date().toISOString() }); sessionStorage.setItem('demo_intentos', JSON.stringify(intentos)); return o; },
     async subirGrabacion() { return 'demo/grabacion.webm'; },
     async url(bucket, path) { return bucket === 'materiales' ? 'demo/media/' + path : null; },
+    async actualizar(tabla, id, cambios) { const t = { gramatica: d.gramatica, pronunciacion: d.reglas, escenarios: d.escenarios, ejercicios: d.ejercicios }[tabla] || []; const f = t.find(x => x.id === id) || (d.reglas || []).find(x => x.id === id); if (f) Object.assign(f, cambios); },
+    async tablaCompleta(tabla) { return { gramatica: d.gramatica, escenarios: d.escenarios, ejercicios: d.ejercicios, materiales: d.materiales, temas: d.temas, tipos_ejercicio: d.tipos, vocabulario: d.vocabulario }[tabla] || []; },
     async upsert() {}, async subirMedio() {}, async alumnos() { return []; }, async intentosDe() { return []; }, async pendientes() { return []; }, async revisar() {}, async renombrar() {}, async actualizarPerfil() {}, async reiniciarAlumno() {},
   };
 }
@@ -770,10 +781,27 @@ async function vEscenario(id) {
   const [e, mats] = await Promise.all([api.escenario(id), api.materialesEsc(id)]);
   const r = pan.porLeccion.get(id) || { orden: [], practica: [] };
   $app.innerHTML = `<div class="migas"><a href="#/">← Lecciones</a></div><h1>${esc(e.nombre)}</h1><p class="sub">${esc(e.objetivo_comunicativo || '')}</p>`;
+  const beE = h(`<button class="btn sec" type="button" style="float:right">✏️ Editar título</button>`);
+  beE.onclick = () => editarFila('escenarios', e, [['nombre', 'Título de la lección'], ['objetivo_comunicativo', 'Objetivo (subtítulo)', 'area']], () => vEscenario(id));
+  $app.querySelector('.migas').append(beE);
   const textos = mats.filter(x => x.tipo === 'texto' && x.funcion === 'introduccion');
   if (textos.length) {
     const t = h(`<details class="tarjeta"><summary>Textos de la lección (${textos.length})</summary></details>`);
     for (const x of textos) t.append(await bloqueMaterial(x));
+    $app.append(t);
+  }
+  // reglas que se presentan por primera vez en esta lección
+  const vistas = new Set();
+  for (const s of m.esc) { if (s.id === id) break; for (const x of (pan.porLeccion.get(s.id)?.orden || [])) x.reqReglas.forEach(g => vistas.add(g)); }
+  const nuevas = [...new Set(r.orden.flatMap(x => x.reqReglas))].filter(g => !vistas.has(g));
+  if (nuevas.length) {
+    const todas = new Map((reglasCache || await api.reglas()).map(g => [g.id, g]));
+    const t = h(`<details class="tarjeta"><summary>Reglas que se presentan en esta lección (${nuevas.length})</summary><div class="lista"></div></details>`);
+    for (const g of nuevas.map(x => todas.get(x)).filter(Boolean)) {
+      const f = h(`<div class="fila"><div class="txt"><b>${esc(g.nombre)}</b><small>${esc(g.id)}</small></div><button class="btn sec" type="button">✏️ Editar</button></div>`);
+      f.querySelector('button').onclick = () => editarRegla(g, () => vEscenario(id));
+      t.querySelector('.lista').append(f);
+    }
     $app.append(t);
   }
   $app.append(h(`<h2>Ejercicios de la lección</h2>`));
@@ -802,6 +830,11 @@ async function vEjercicio(id) {
   mats.sort((a, b) => matIds.indexOf(a.id) - matIds.indexOf(b.id));
 
   $app.innerHTML = perfil.rol === 'docente' ? `<div class="migas"><a href="#/e/${ej.escenario}">← ${esc(ej.escenario)}</a> · ejercicio ${pos + 1} de ${hermanos.length}</div>` : `<div class="migas"><a href="#/">← Salir</a></div>`;
+  if (perfil.rol === 'docente') {
+    const be = h(`<button class="btn sec" type="button" style="float:right">✏️ Editar</button>`);
+    be.onclick = () => editarEjercicio(ej, c);
+    $app.querySelector('.migas').append(be);
+  }
   const card = h(`<div class="tarjeta"><p class="instr">${esc(ej.instrucciones)}</p><div class="media"></div><div class="cuerpo"></div><div class="res"></div><div class="acciones"></div></div>`);
   $app.append(card);
   const media = card.querySelector('.media');
@@ -1156,15 +1189,143 @@ async function tRevisar(el) {
   }
 }
 
+// ---------------------------------------------------------------- edición de contenido desde el panel docente
+// Formulario genérico: campos = [[columna, etiqueta, 'area'?]]
+function editarFila(tabla, fila, campos, alGuardar, extra) {
+  const f = h(`<div class="tarjeta editor"><h2 style="margin-top:0">Editar ${esc(fila.id)}</h2><div class="campos"></div><div class="extra"></div>
+    <div class="acciones"><button class="btn" type="button">Guardar</button><button class="btn sec" type="button">Cancelar</button></div><p class="ok-msg"></p></div>`);
+  for (const [k, et, tipo] of campos) {
+    const v = fila[k] ?? '';
+    f.querySelector('.campos').append(h(`<div class="campo"><label>${esc(et)}</label>${tipo === 'area' || String(v).length > 70 ? `<textarea data-k="${k}" rows="${Math.min(14, 2 + String(v).split('\n').length)}">${esc(v)}</textarea>` : `<input type="text" data-k="${k}" value="${esc(v)}">`}</div>`));
+  }
+  if (extra) f.querySelector('.extra').append(extra.el);
+  const [bG, bC] = f.querySelectorAll('.acciones .btn'), msg = f.querySelector('.ok-msg');
+  bC.onclick = () => f.remove();
+  bG.onclick = async () => {
+    bG.disabled = true; msg.textContent = 'Guardando…';
+    try {
+      const cambios = {};
+      f.querySelectorAll('.campos [data-k]').forEach(i => { if (i.value !== String(fila[i.dataset.k] ?? '')) cambios[i.dataset.k] = i.value.trim() === '' ? null : i.value; });
+      if (extra) Object.assign(cambios, extra.valor());
+      if (!Object.keys(cambios).length) { msg.textContent = 'No hay cambios.'; bG.disabled = false; return; }
+      await api.actualizar(tabla, fila.id, cambios);
+      reglasCache = null;
+      msg.textContent = '✓ Guardado.'; setTimeout(alGuardar, 400);
+    } catch (e) { msg.textContent = '✗ ' + e.message; bG.disabled = false; }
+  };
+  $app.prepend(f); f.scrollIntoView({ behavior: 'smooth' });
+  return f;
+}
+
+// Textos del contenido de un ejercicio, como campos sueltos (sin tocar JSON)
+const NOM_CAMPO = { items: 'Pregunta', q: 'enunciado', options: 'opciones (una por línea)', answers: 'respuestas aceptadas (una por línea)', answer: 'respuesta correcta',
+  pairs: 'parejas (izquierda | derecha, una por línea)', tarjetas: 'Tarjeta', ru: 'ruso', es: 'español', tr: 'transcripción', nota: 'nota', elementos: 'elementos (uno por línea)',
+  textos: 'textos (uno por línea)', criterios: 'criterios para la corrección con IA', modelo: 'ejemplo de respuesta', tiles: 'fichas (una por línea)', preguntas: 'preguntas (una por línea)',
+  texto: 'texto', categorias: 'categoría', respuestas: 'respuestas' };
+const NO_EDITAR = new Set(['tipo', 'img', 'imagen', 'grupo', 'fuente', 'temas', 'banco', 'n', 'id', 'ref']);
+function camposContenido(c) {
+  const out = [];
+  const esStrs = a => Array.isArray(a) && a.every(x => typeof x === 'string');
+  const walk = (x, path, etq) => {
+    if (typeof x === 'string') return out.push({ path, etq, kind: 'str', v: x });
+    if (esStrs(x)) return out.push({ path, etq, kind: 'lineas', v: x.join('\n') });
+    if (Array.isArray(x) && x.every(esStrs)) return out.push({ path, etq, kind: 'pares', v: x.map(p => p.join(' | ')).join('\n') });
+    if (Array.isArray(x)) return x.forEach((y, i) => walk(y, [...path, i], `${etq ? etq + ' ' : ''}${i + 1}`));
+    if (x && typeof x === 'object') for (const [k, y] of Object.entries(x)) {
+      if (NO_EDITAR.has(k)) continue;
+      const nk = path.at(-1) === 'categorias' ? `«${k}»` : (NOM_CAMPO[k] || k);
+      walk(y, [...path, k], etq ? `${etq} · ${nk}` : nk);
+    }
+  };
+  walk(c, [], '');
+  return out;
+}
+function editorContenido(c) {
+  const campos = camposContenido(c);
+  const el = h(`<div><details ${campos.length <= 12 ? 'open' : ''}><summary><b>Textos del ejercicio (${campos.length})</b></summary>
+    <p class="sub">Si cambias una opción que es la respuesta correcta, cámbiala también en «respuestas aceptadas».</p><div class="cc"></div></details>
+    <details style="margin-top:10px"><summary>Avanzado: editar como JSON</summary><p class="sub">Solo si necesitas cambiar la estructura (agregar preguntas, categorías…). Si escribes aquí, se usa esto en lugar de los campos de arriba.</p><textarea class="json" rows="12" spellcheck="false"></textarea></details></div>`);
+  const cc = el.querySelector('.cc');
+  campos.forEach((f, i) => cc.append(h(`<div class="campo"><label>${esc(f.etq)}</label>${f.kind === 'str' && f.v.length <= 70 ? `<input type="text" data-i="${i}" value="${esc(f.v)}">` : `<textarea data-i="${i}" rows="${Math.min(10, 1 + f.v.split('\n').length)}">${esc(f.v)}</textarea>`}</div>`)));
+  const json = el.querySelector('.json'), original = JSON.stringify(c, null, 1);
+  json.value = original;
+  return { el, valor() {
+    if (json.value.trim() !== original.trim()) {
+      try { return JSON.parse(json.value); } catch (e) { throw new Error('El JSON no es válido: ' + e.message); }
+    }
+    const n = structuredClone(c); let cambio = false;
+    cc.querySelectorAll('[data-i]').forEach(inp => {
+      const f = campos[inp.dataset.i]; if (inp.value === f.v) return;
+      cambio = true;
+      const val = f.kind === 'str' ? inp.value : f.kind === 'lineas' ? inp.value.split('\n').map(x => x.trim()).filter(Boolean)
+        : inp.value.split('\n').filter(x => x.trim()).map(l => l.split('|').map(x => x.trim()));
+      let o = n; f.path.slice(0, -1).forEach(k => o = o[k]); o[f.path.at(-1)] = val;
+    });
+    return cambio ? n : null;
+  } };
+}
+function editarEjercicio(ej, c) {
+  const ed = editorContenido(c);
+  editarFila('ejercicios', ej, [['instrucciones', 'Instrucción (título del ejercicio)', 'area']], () => vEjercicio(ej.id),
+    { el: ed.el, valor: () => { const n = ed.valor(); return n ? { contenido: n } : {}; } });
+}
+function editarRegla(g, alGuardar) {
+  const tabla = /^P/.test(g.id) ? 'pronunciacion' : 'gramatica';
+  const prev = h(`<div><div class="sub" style="margin-top:8px">Vista previa:</div><div class="regla"></div></div>`);
+  const f = editarFila(tabla, g, [['nombre', 'Título de la regla'], ['descripcion', 'Descripción breve (se usa si no hay explicación)', 'area'],
+    ['explicacion', 'Explicación: líneas que empiezan con «|» forman tablas (| a | b |); [img:M123] inserta una imagen', 'area'], ['ejemplo', 'Ejemplo en ruso', 'area']], alGuardar, { el: prev, valor: () => ({}) });
+  const pintar = () => {
+    const v = k => f.querySelector(`[data-k="${k}"]`).value;
+    prev.querySelector('.regla').innerHTML = `<b style="font-size:18px">${esc(v('nombre'))}</b>${v('explicacion') ? explicacionHtml(v('explicacion')) : `<p>${esc(v('descripcion'))}</p>`}${v('ejemplo') ? `<div class="texto-ru">${esc(v('ejemplo'))}</div>` : ''}`;
+    resolverImgs(prev);
+  };
+  f.querySelectorAll('[data-k]').forEach(i => i.oninput = pintar); pintar();
+}
+
+// Descarga del contenido actual de la plataforma, con las mismas hojas y columnas que la importación
+const NOMBRE_HOJA = { habilidades: 'Habilidades', gramatica: 'Gramatica', pronunciacion: 'Pronunciacion', vocabulario: 'Vocabulario', temas: 'Temas',
+  escenarios: 'Escenarios', tipos_ejercicio: 'Tipos_ejercicio', materiales: 'Materiales', ejercicios: 'Ejercicios' };
+async function descargarContenido(out) {
+  const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+  const wb = XLSX.utils.book_new();
+  for (const t of ORDEN_IMPORT) {
+    out(`Leyendo ${t}…`);
+    const filas = (await api.tablaCompleta(TABLAS[t])).map(r => Object.fromEntries(COLS[t].map(c => {
+      const v = r[c]; return [c, v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : v];
+    })));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas, { header: COLS[t] }), NOMBRE_HOJA[t]);
+  }
+  const f = new Date(), nombre = `contenido-plataforma-${f.toISOString().slice(0, 10)}.xlsx`;
+  XLSX.writeFile(wb, nombre);
+  out(`✓ Descargado ${nombre}.`);
+}
+
 async function tContenido(el) {
-  el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">1 · Importar la hoja de contenido</h2>
-    <p class="sub">En Google Sheets: Archivo → Descargar → Microsoft Excel (.xlsx). Sube ese archivo aquí. Puedes repetirlo cada vez que cambies la hoja: actualiza filas existentes y agrega las nuevas.</p>
+  el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">Descargar contenido actual</h2>
+    <p class="sub">Todo el contenido tal como está ahora en la plataforma, con tus ediciones (mismas hojas y columnas que la importación). Úsalo como copia y como base para cambios grandes: lo editas o me lo envías, y luego lo vuelves a importar abajo.</p>
+    <button class="btn" id="bd" type="button">Descargar .xlsx</button></div>`));
+  el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">Editar reglas</h2><p class="sub">Busca por nombre o código (G…, P…). Los ejercicios se editan desde Lecciones → ejercicio → ✏️ Editar.</p>
+    <input id="br" placeholder="Ej.: genitivo, G045, ы"><div class="lista" id="lr" style="margin-top:8px"></div></div>`));
+  el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">Importar hoja de contenido</h2>
+    <p class="sub">Sube un .xlsx con las hojas del contenido (el descargado arriba, o la hoja de Google: Archivo → Descargar → Microsoft Excel). Actualiza filas existentes y agrega las nuevas. Ojo: lo que importes reemplaza las ediciones hechas aquí en esas mismas filas.</p>
     <input type="file" accept=".xlsx" id="fx"> <button class="btn" id="bx" type="button">Importar</button></div>`));
-  el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">2 · Subir audios e imágenes</h2>
+  el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">Subir audios e imágenes</h2>
     <p class="sub">Selecciona todos los archivos de las carpetas <b>audio</b>, <b>img</b> y <b>video</b> (nombres tipo M003.mp3, M004.jpg, M455.mp4). Se guardan en Supabase y los alumnos los ven sin cuenta de Google.</p>
     <input type="file" multiple accept=".mp3,.jpg,.jpeg,.png,.webp,.mp4" id="fm"> <button class="btn" id="bm" type="button">Subir</button></div>`));
   const log = h(`<div class="log" hidden></div>`); el.append(log);
   const out = s => { log.hidden = false; log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
+  el.querySelector('#bd').onclick = async e => { e.target.disabled = true; try { await descargarContenido(out); } catch (er) { out('✗ ' + er.message); } e.target.disabled = false; };
+  const lr = el.querySelector('#lr'); let reglas = null;
+  el.querySelector('#br').oninput = async ev => {
+    reglas ??= reglasCache || await api.reglas();
+    const q = ev.target.value.trim().toLowerCase(); lr.innerHTML = '';
+    if (q.length < 2) return;
+    for (const g of reglas.filter(g => (g.id + ' ' + g.nombre).toLowerCase().includes(q)).slice(0, 15)) {
+      const f = h(`<div class="fila"><div class="txt"><b>${esc(g.nombre)}</b><small>${esc(g.id)}</small></div><button class="btn sec" type="button">✏️ Editar</button></div>`);
+      f.querySelector('button').onclick = () => editarRegla(g, () => vDocente('contenido'));
+      lr.append(f);
+    }
+  };
 
   el.querySelector('#bx').onclick = async () => {
     const f = el.querySelector('#fx').files[0]; if (!f) return out('Elige el archivo .xlsx primero.');
