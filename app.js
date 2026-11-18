@@ -456,7 +456,7 @@ function celebrarNivel(nivel, eventos) {
   const clave = `nivel_celebrado_${sesion?.user?.id || 'demo'}`;
   if (!nivel || localStorage.getItem(clave) === nivel) return;
   try { localStorage.setItem(clave, nivel); } catch (e) {}
-  const pedido = eventos.some(e => e.tipo === 'certificado' && e.ref === nivel);
+  const pedido = !planConCertificado() || eventos.some(e => e.tipo === 'certificado' && e.ref === nivel);   // sin plan Pro: solo felicitación
   const o = h(`<div class="felicidades"><div class="caja"><div class="copa">🏆</div><h1>¡Felicidades!</h1>
     <p class="grande">Alcanzaste el nivel <b>${esc(nivel)}</b> de ruso.</p><p>Поздравляем! Dominas el vocabulario, la gramática y las habilidades de este nivel.</p>
     ${pedido ? '' : `<p class="instr">¿Quieres recibir tu certificado de nivel ${esc(nivel)}?</p><p class="sub">El certificado se entrega al aprobar el examen de suficiencia (5 partes, mínimo 66 % en cada una). Puedes rendirlo cuando quieras desde tu inicio.</p>`}
@@ -710,7 +710,9 @@ async function vInicio() {
     const logrado = proyeccion(m).logrado || (location.search.includes('demo') && new URLSearchParams(location.search).get('celebrar'));
     const [certs, exs] = await Promise.all([api.certificados().catch(() => []), api.examenes().catch(() => [])]);
     for (const c of certs) $app.append(h(`<a class="fila cert-fila" href="#/certificado/${esc(c.codigo)}"><div class="txt"><b>📜 Certificado de nivel ${esc(c.nivel)}</b><small>Código ${esc(c.codigo)} · ver e imprimir</small></div></a>`));
-    if (logrado && !certs.some(c => c.nivel === logrado)) {
+    if (logrado && !certs.some(c => c.nivel === logrado) && !planConCertificado()) {
+      $app.append(h(`<div class="tarjeta"><div class="etq">Examen de suficiencia · ${esc(logrado)}</div><p>Ya dominas el nivel ${esc(logrado)}. 🎉 El examen y el certificado son parte del plan <b>Pro</b>, que estará disponible muy pronto.</p></div>`));
+    } else if (logrado && !certs.some(c => c.nivel === logrado)) {
       const ex = exs.find(x => x.nivel === logrado && x.estado !== 'anulado');
       $app.append(h(`<div class="tarjeta"><div class="etq">Examen de suficiencia · ${esc(logrado)}</div>${ex ? `<p>${ex.estado === 'en_curso' ? 'Tienes un examen sin terminar.' : ex.estado === 'entregado' ? 'Examen entregado: tu profesora lo está calificando.' : ex.aprobado ? 'Aprobado: tu certificado se está emitiendo.' : 'Calificado: no alcanzaste el mínimo en alguna parte. Puedes volver a intentarlo.'}</p>` : `<p>Ya dominas el nivel ${esc(logrado)}. Rinde el examen para obtener tu certificado.</p>`}
         ${!ex || ex.estado === 'en_curso' || (ex.estado === 'calificado' && !ex.aprobado) ? `<div class="acciones"><a class="btn sec" href="#/examen?nivel=${esc(logrado)}">${ex?.estado === 'en_curso' ? 'Continuar examen' : 'Rendir examen'}</a></div>` : ''}</div>`));
@@ -1144,7 +1146,7 @@ async function tAlumno(el, uid) {
   const zt = h(`<label style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" ${p.orales_zoom ? 'checked' : ''}> Parte oral por Zoom: los ejercicios orales no se le muestran y van a la lista de la clase</label>`);
   zt.querySelector('input').onchange = async e => { await api.actualizarPerfil(uid, { orales_zoom: e.target.checked }); location.reload(); };
   el.append(zt);
-  const PL = [['prueba', 'Prueba gratis (solo primera lección)'], ['plataforma', 'Esencial'], ['completo', 'Acceso completo (sin vencimiento)'],
+  const PL = [['prueba', 'Prueba gratis (solo primera lección)'], ['plataforma', 'Esencial'], ['pro', 'Pro (con examen y certificado)'], ['completo', 'Acceso completo (igual que Esencial, sin vencimiento)'],
     ...[['zoom_grupal', 'Plataforma + Zoom grupal (anterior)'], ['zoom_individual', 'Plataforma + Zoom individual (anterior)']].filter(([k]) => p.plan === k)];
   const pf = h(`<div class="campo" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end"><div><label>Plan</label><select>${PL.map(([k, t]) => `<option value="${k}" ${p.plan === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
     <div><label>Pagado hasta</label><input type="date" value="${esc(p.plan_hasta || '')}"></div><button class="btn sec" type="button">Guardar plan</button></div>`);
@@ -1726,6 +1728,8 @@ async function tAjustes(el) {
   };
   el.append(c);
 }
+// examen y certificado: solo plan Pro
+const planConCertificado = () => perfil?.plan === 'pro' || location.search.includes('demo');
 let pronActivaCache = null;
 async function pronunciacionActiva() {
   if (pronActivaCache !== null) return pronActivaCache;
@@ -1783,6 +1787,7 @@ async function generarExamen(nivel, opc = {}) {
 }
 
 async function vExamen() {
+  if (!planConCertificado()) { nav('inicio'); $app.innerHTML = `<div class="tarjeta"><h1>Examen de suficiencia</h1><p>El examen y el certificado son parte del plan <b>Pro</b>, que estará disponible muy pronto.</p><div class="acciones"><a class="btn sec" href="#/">← Volver</a></div></div>`; return; }
   nav('inicio');
   const nivel = new URLSearchParams(location.hash.split('?')[1] || '').get('nivel') || 'A1';
   const previos = await api.examenes();
