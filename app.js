@@ -838,7 +838,7 @@ async function vEjercicio(id) {
           const espera = h(`<div class="resultado pend">Enviado. Revisando tu texto… ⏳</div>`); res.append(espera);
           try {
             const r = await api.corregirIA(guardado.id);
-            espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div><p class="sub">Tu profesora también lo revisará.</p></div>`) : h(`<div class="resultado pend">Enviado. Tu profesora lo revisará y verás sus comentarios aquí.</div>`));
+            espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div></div>`) : h(`<div class="resultado pend">Enviado. Tu profesora lo revisará y verás sus comentarios aquí.</div>`));
           } catch (e) { espera.textContent = 'Enviado. Tu profesora lo revisará y verás sus comentarios aquí.'; api.revisar(guardado.id, { estado: 'pendiente_docente' }).catch(() => {}); }
         } else res.append(h(`<div class="resultado pend">${out.audio || out.respuesta?.texto ? 'Enviado. Tu profesor lo revisará y verás sus comentarios aquí.' : 'Práctica registrada.'}</div>`));
       } else {
