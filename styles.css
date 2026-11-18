@@ -177,3 +177,9 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .enunciado{font-size:15px;color:var(--suave);margin:4px 0 10px}
 .fila-img{display:flex;gap:12px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--linea)}
 .fila-img img{width:90px;height:90px;object-fit:contain;background:#fff;border:1px solid var(--linea);border-radius:8px}
+.fila.ordenable{cursor:grab;align-items:center}
+.fila.ordenable .asa{color:var(--suave);font-size:18px;padding:0 4px}
+.fila.ordenable .flechas{display:flex;gap:4px;margin-left:auto}
+.fila.ordenable .flechas .btn{padding:4px 10px}
+.fila.arrastrando{opacity:.4}
+.fila.destino{outline:2px dashed var(--acento2)}

@@ -317,6 +317,8 @@ export function sortearPreguntas(m, e, { cubrir = new Set() } = {}) {
     .sort((a, b) => a.n - b.n || b.d - a.d).slice(0, e.nMostrar).map(o => o.x);
   return elegidos.map(x => `${x.ej}.${x.i}`);
 }
+// orden fijado por la docente dentro de la lección (si no hay, se calcula por lo que exige cada ejercicio)
+const ordenManual = e => (e.orden == null || e.orden === '' ? Infinity : Number(e.orden));
 const costo = (m, e) => { const n = nuevoDe(m, e); return n.reglas.length * PESO_REGLA + n.palabras.length; };
 const disponible = (m, e) => e.reqEj.every(id => m.intentado(id));
 
@@ -425,7 +427,7 @@ export function siguienteTarea(m) {
   const propios = m.ejs.filter(e => e.escenario === est.actual);
   const libres = propios.filter(e => !m.intentado(e.id) && disponible(m, e));
   if (libres.length) {
-    libres.sort((a, b) => costo(m, a) - costo(m, b) || (a.hab === m.ultimoHab) - (b.hab === m.ultimoHab) || a.id.localeCompare(b.id));
+    libres.sort((a, b) => ordenManual(a) - ordenManual(b) || costo(m, a) - costo(m, b) || (a.hab === m.ultimoHab) - (b.hab === m.ultimoHab) || a.id.localeCompare(b.id));
     // alumno con parte oral por Zoom: los ejercicios orales pasan a la lista del docente (salvo los de base, como el alfabeto)
     if (m.oralesZoom && libres[0].oral && !libres[0].base) return { tipo: 'zoom', ejercicio: libres[0] };
     return conPresentacion(m, libres[0], 'nuevo');
@@ -529,7 +531,7 @@ export function panorama(m) {
       const disp = rest.filter(e => e.reqEj.every(id => hechos.has(id) || !m.porId.get(id)?.escenario));
       const pool = disp.length ? disp : rest;
       const c = e => e.reqReglas.filter(x => !K.has(x)).length * PESO_REGLA + e.reqV.filter(x => !K.has(x)).length;
-      pool.sort((a, b) => c(a) - c(b) || a.id.localeCompare(b.id));
+      pool.sort((a, b) => ordenManual(a) - ordenManual(b) || c(a) - c(b) || a.id.localeCompare(b.id));
       const e = pool[0]; orden.push(e); hechos.add(e.id); e.reqReglas.forEach(x => K.add(x)); e.reqV.forEach(x => K.add(x));
       rest.splice(rest.indexOf(e), 1);
     }

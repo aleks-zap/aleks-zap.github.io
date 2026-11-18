@@ -110,6 +110,10 @@ async function crearSupabase() {
       const r = ok(await sb.from(tabla).update(cambios).eq('id', id).select('id'));
       if (!r.length) throw new Error('No se guardó (sin permiso o fila inexistente).');
     },
+    async buscarVocab(q) {
+      const t = q.replace(/[,()%*]/g, ' ').trim();
+      return ok(await sb.from('vocabulario').select('id,lema,traduccion,categoria,uso').or(`lema.ilike.%${t}%,traduccion.ilike.%${t}%,id.eq.${t}`).order('id').limit(20));
+    },
     async tablaCompleta(tabla) {                          // para descargar el contenido actual, en páginas de 1000
       const out = [];
       for (let i = 0; ; i += 1000) { const r = ok(await sb.from(tabla).select('*').order('id').range(i, i + 999)); out.push(...r); if (r.length < 1000) break; }
@@ -164,6 +168,7 @@ async function crearDemo() {
     async subirGrabacion() { return 'demo/grabacion.webm'; },
     async url(bucket, path) { return bucket === 'materiales' ? 'demo/media/' + path : null; },
     async actualizar(tabla, id, cambios) { const t = { gramatica: d.gramatica, pronunciacion: d.reglas, escenarios: d.escenarios, ejercicios: d.ejercicios }[tabla] || []; const f = t.find(x => x.id === id) || (d.reglas || []).find(x => x.id === id); if (f) Object.assign(f, cambios); },
+    async buscarVocab(q) { q = q.toLowerCase(); return (d.vocabulario || []).filter(v => (v.lema + ' ' + v.traduccion + ' ' + v.id).toLowerCase().includes(q)).slice(0, 20); },
     async tablaCompleta(tabla) { return { gramatica: d.gramatica, escenarios: d.escenarios, ejercicios: d.ejercicios, materiales: d.materiales, temas: d.temas, tipos_ejercicio: d.tipos, vocabulario: d.vocabulario }[tabla] || []; },
     async upsert() {}, async subirMedio() {}, async alumnos() { return []; }, async intentosDe() { return []; }, async pendientes() { return []; }, async revisar() {}, async renombrar() {}, async actualizarPerfil() {}, async reiniciarAlumno() {},
   };
@@ -661,7 +666,7 @@ async function vInicio() {
   if (sig.tipo === 'planificar') {                    // repaso del día: se fija al primer ingreso
     await api.registrar('repaso', [sig.ref]); return vInicio();
   }
-  const esEj = !!sig.ejercicio && sig.tipo !== 'zoom';
+  const esEj = ['nuevo', 'repaso', 'repasoDia'].includes(sig.tipo) && !!sig.ejercicio;   // reglas y palabras nuevas se presentan antes, también en modo ejercicio
   if (['descanso', 'fin'].includes(sig.tipo)) enFlujo = false;
   if (enFlujo && esEj) { location.hash = `#/x/${sig.ejercicio.id}`; return; }          // sigue directo con el siguiente ejercicio
   if (sig.tipo === 'tarjetas') {
@@ -805,8 +810,11 @@ async function vEscenario(id) {
     $app.append(t);
   }
   $app.append(h(`<h2>Ejercicios de la lección</h2>`));
-  $app.append(h(`<p class="sub">Orden para un alumno que empieza de cero.</p>`));
-  $app.append(h(`<div class="lista">${r.orden.map(fila).join('')}</div>`));
+  $app.append(h(`<p class="sub">Orden para un alumno que empieza de cero. Puedes cambiarlo: arrastra los ejercicios o usa las flechas. Antes de cada ejercicio se siguen presentando las reglas y palabras nuevas que necesita.</p>`));
+  const lista = h(`<div class="lista">${r.orden.map(fila).join('')}</div>`);
+  const bOrd = h(`<button class="btn sec" type="button">↕ Cambiar orden</button>`);
+  bOrd.onclick = () => ordenarLeccion(lista, r.orden, () => vEscenario(id), bOrd);
+  $app.append(bOrd, lista);
   if (r.practica.length) {
     $app.append(h(`<h2>Práctica adicional</h2>`));
     $app.append(h(`<p class="sub">No forman parte del camino de la lección: se usan en repasos y pruebas, cuando el alumno ya conoce su regla y sus palabras.</p>`));
@@ -1002,7 +1010,7 @@ const COLS = {
   escenarios: ['id','nombre','nivel','temas','orden','objetivo_comunicativo','gramatica_foco','pronunciacion_foco'],
   materiales: ['id','titulo','tipo','fuente','inicio','fin','nivel','escenarios','temas','gramatica_presente','transcripcion','licencia','origen','revisado','funcion'],
   tipos_ejercicio: ['id','nombre','descripcion','habilidades_principales','habilidades_secundarias','material','tipos_material_compatibles','generable_ia','equivalente_h5p','nivel_minimo'],
-  ejercicios: ['id','tipo_ejercicio','material','escenario','gramatica_objetivo','vocabulario_objetivo','titulo','categoria','instrucciones','contenido','prerrequisitos'],
+  ejercicios: ['id','tipo_ejercicio','material','escenario','gramatica_objetivo','vocabulario_objetivo','titulo','categoria','instrucciones','contenido','prerrequisitos','orden'],
 };
 const ORDEN_IMPORT = ['habilidades','gramatica','pronunciacion','temas','vocabulario','escenarios','tipos_ejercicio','materiales','ejercicios'];
 
@@ -1198,13 +1206,47 @@ async function tRevisar(el) {
 }
 
 // ---------------------------------------------------------------- edición de contenido desde el panel docente
+// Orden manual de los ejercicios de una lección: arrastrar (computadora) o flechas (celular)
+function ordenarLeccion(lista, orden, alGuardar, bOrd) {
+  bOrd.hidden = true;
+  let ids = orden.map(e => e.id); const porId = new Map(orden.map(e => [e.id, e]));
+  const barra = h(`<div class="acciones"><button class="btn" type="button">Guardar orden</button><button class="btn sec" type="button">Cancelar</button><span class="ok-msg"></span></div>`);
+  lista.before(barra);
+  let arrastrado = null;
+  const pintar = () => {
+    lista.innerHTML = '';
+    ids.forEach((id, i) => {
+      const e = porId.get(id);
+      const f = h(`<div class="fila ordenable" draggable="true"><span class="asa">☰</span><div class="num">${i + 1}</div><div class="txt"><b>${esc(e.titulo || e.instrucciones || '')}</b><small>${esc(e.id)} · ${esc(e.hab)}</small></div>
+        <span class="flechas"><button type="button" class="btn sec" data-d="-1" ${i ? '' : 'disabled'}>↑</button><button type="button" class="btn sec" data-d="1" ${i < ids.length - 1 ? '' : 'disabled'}>↓</button></span></div>`);
+      f.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { const j = i + Number(b.dataset.d); [ids[i], ids[j]] = [ids[j], ids[i]]; pintar(); });
+      f.ondragstart = ev => { arrastrado = id; f.classList.add('arrastrando'); try { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', id); } catch {} };
+      f.ondragend = () => f.classList.remove('arrastrando');
+      f.ondragover = ev => { ev.preventDefault(); f.classList.add('destino'); };
+      f.ondragleave = () => f.classList.remove('destino');
+      f.ondrop = ev => { ev.preventDefault(); f.classList.remove('destino'); if (!arrastrado || arrastrado === id) return; ids = ids.filter(x => x !== arrastrado); ids.splice(ids.indexOf(id), 0, arrastrado); pintar(); };
+      lista.append(f);
+    });
+  };
+  pintar();
+  const [bG, bC] = barra.querySelectorAll('.btn'), msg = barra.querySelector('.ok-msg');
+  bC.onclick = alGuardar;
+  bG.onclick = async () => {
+    bG.disabled = true; msg.textContent = 'Guardando…';
+    try {
+      const cambios = ids.map((id, i) => [id, i + 1]).filter(([id, n]) => Number(porId.get(id).orden) !== n);
+      for (let i = 0; i < cambios.length; i += 10) await Promise.all(cambios.slice(i, i + 10).map(([id, n]) => api.actualizar('ejercicios', id, { orden: n })));
+      msg.textContent = '✓ Orden guardado.'; setTimeout(alGuardar, 500);
+    } catch (e) { msg.textContent = '✗ ' + e.message; bG.disabled = false; }
+  };
+}
 // Formulario genérico: campos = [[columna, etiqueta, 'area'?]]
 function editarFila(tabla, fila, campos, alGuardar, extra) {
   const f = h(`<div class="tarjeta editor"><h2 style="margin-top:0">Editar ${esc(fila.id)}</h2><div class="campos"></div><div class="extra"></div>
     <div class="acciones"><button class="btn" type="button">Guardar</button><button class="btn sec" type="button">Cancelar</button></div><p class="ok-msg"></p></div>`);
   for (const [k, et, tipo] of campos) {
     const v = fila[k] ?? '';
-    if (Array.isArray(tipo)) { f.querySelector('.campos').append(h(`<div class="campo"><label>${esc(et)}</label><select data-k="${k}"><option value="">(automática)</option>${tipo.map(o => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select></div>`)); continue; }
+    if (Array.isArray(tipo)) { const ops = tipo.map(o => typeof o === 'string' ? { v: o, t: o } : o); f.querySelector('.campos').append(h(`<div class="campo"><label>${esc(et)}</label><select data-k="${k}"><option value="">${k === 'categoria' ? '(automática)' : '—'}</option>${ops.map(o => `<option value="${esc(o.v)}"${o.v === v ? ' selected' : ''}>${esc(o.t)}</option>`).join('')}</select></div>`)); continue; }
     f.querySelector('.campos').append(h(`<div class="campo"><label>${esc(et)}</label>${tipo === 'area' || String(v).length > 70 ? `<textarea data-k="${k}" rows="${Math.min(14, 2 + String(v).split('\n').length)}">${esc(v)}</textarea>` : `<input type="text" data-k="${k}" value="${esc(v)}">`}</div>`));
   }
   if (extra) f.querySelector('.extra').append(extra.el);
@@ -1216,6 +1258,7 @@ function editarFila(tabla, fila, campos, alGuardar, extra) {
       const cambios = {};
       f.querySelectorAll('.campos [data-k]').forEach(i => { if (i.value !== String(fila[i.dataset.k] ?? '')) cambios[i.dataset.k] = i.value.trim() === '' ? null : i.value; });
       if (extra) Object.assign(cambios, extra.valor());
+      if ('escenario' in cambios) cambios.orden = null;
       if (!Object.keys(cambios).length) { msg.textContent = 'No hay cambios.'; bG.disabled = false; return; }
       await api.actualizar(tabla, fila.id, cambios);
       reglasCache = null;
@@ -1273,10 +1316,12 @@ function editorContenido(c) {
     return cambio ? n : null;
   } };
 }
-function editarEjercicio(ej, c) {
+let LECCIONES = [];
+async function editarEjercicio(ej, c) {
+  if (!LECCIONES.length) LECCIONES = (await api.todosEscenarios()).map(e => ({ v: e.id, t: `${e.id} · ${e.nombre}` }));
   const ed = editorContenido(c);
   const caja = h(`<div></div>`); caja.append(editorImagenes(ej, c), ed.el);
-  editarFila('ejercicios', ej, [['titulo', 'Título (corto)'], ['categoria', 'Tipo de ejercicio', HABILIDADES], ['instrucciones', 'Enunciado (subtítulo, letra más pequeña)', 'area']], () => vEjercicio(ej.id),
+  editarFila('ejercicios', ej, [['titulo', 'Título (corto)'], ['categoria', 'Tipo de ejercicio', HABILIDADES], ['escenario', 'Lección (vacío = práctica sin lección)', LECCIONES], ['instrucciones', 'Enunciado (subtítulo, letra más pequeña)', 'area']], () => vEjercicio(ej.id),
     { el: caja, valor: () => { const n = ed.valor(); return n ? { contenido: n } : {}; } });
 }
 // Imágenes del ejercicio: reemplazar el archivo manteniendo el mismo nombre (Mxxx.jpg)
@@ -1354,6 +1399,8 @@ async function tContenido(el) {
     <button class="btn" id="bd" type="button">Descargar .xlsx</button></div>`));
   el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">Editar reglas</h2><p class="sub">Busca por nombre o código (G…, P…). Los ejercicios se editan desde Lecciones → ejercicio → ✏️ Editar.</p>
     <input id="br" placeholder="Ej.: genitivo, G045, ы"><div class="lista" id="lr" style="margin-top:8px"></div></div>`));
+  el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">Editar palabras</h2><p class="sub">Lo que se muestra en las tarjetas de palabras nuevas y de repaso. Busca en ruso, en español o por código (V…).</p>
+    <input id="bv" placeholder="Ej.: это, casa, V0123"><div class="lista" id="lv" style="margin-top:8px"></div></div>`));
   el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">Importar hoja de contenido</h2>
     <p class="sub">Sube un .xlsx con las hojas del contenido (el descargado arriba, o la hoja de Google: Archivo → Descargar → Microsoft Excel). Actualiza filas existentes y agrega las nuevas. Ojo: lo que importes reemplaza las ediciones hechas aquí en esas mismas filas.</p>
     <input type="file" accept=".xlsx" id="fx"> <button class="btn" id="bx" type="button">Importar</button></div>`));
@@ -1364,6 +1411,19 @@ async function tContenido(el) {
   const out = s => { log.hidden = false; log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
   el.querySelector('#bd').onclick = async e => { e.target.disabled = true; try { await descargarContenido(out); } catch (er) { out('✗ ' + er.message); } e.target.disabled = false; };
   const lr = el.querySelector('#lr'); let reglas = null;
+  const lv = el.querySelector('#lv'); let tv = null;
+  el.querySelector('#bv').oninput = ev => {
+    clearTimeout(tv); const q = ev.target.value.trim();
+    tv = setTimeout(async () => {
+      lv.innerHTML = ''; if (q.length < 2) return;
+      for (const v of await api.buscarVocab(q)) {
+        const f = h(`<div class="fila"><div class="txt"><b>${esc(v.lema)}</b><small>${esc(v.id)} · ${esc(v.traduccion || '')}${v.uso ? ' · ' + esc(v.uso) : ''}</small></div><button class="btn sec" type="button">✏️ Editar</button></div>`);
+        f.querySelector('button').onclick = () => editarFila('vocabulario', v, [['lema', 'Palabra en ruso (con tilde de acento si quieres: заво́д)'], ['traduccion', 'Traducción'], ['categoria', 'Categoría gramatical'],
+          ['uso', 'Uso en el curso', [{ v: 'activo', t: 'activo (el alumno debe producirla)' }, { v: 'pasivo', t: 'pasivo (solo reconocerla)' }]]], () => { vocabCache = null; vDocente('contenido'); });
+        lv.append(f);
+      }
+    }, 300);
+  };
   el.querySelector('#br').oninput = async ev => {
     reglas ??= reglasCache || await api.reglas();
     const q = ev.target.value.trim().toLowerCase(); lr.innerHTML = '';
@@ -1388,9 +1448,9 @@ async function tContenido(el) {
       }).filter(r => String(r.id || '').trim());
       const limpias = []; let malas = 0;
       for (const r of filas) {
-        const o = {}; for (const c of COLS[t]) o[c] = r[c] === '' ? null : r[c] ?? null;
+        const o = {}; for (const c of COLS[t]) if (c in r) o[c] = r[c] === '' ? null : r[c];   // columnas que no están en la hoja no se tocan
         o.id = String(o.id).trim();
-        if (t === 'escenarios') o.orden = o.orden == null ? null : Number(o.orden);
+        if ('orden' in o) o.orden = o.orden == null ? null : Number(o.orden);
         if (t === 'ejercicios') { try { o.contenido = o.contenido ? JSON.parse(o.contenido) : null; } catch { malas++; continue; } }
         limpias.push(o);
       }
