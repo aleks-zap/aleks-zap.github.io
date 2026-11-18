@@ -173,3 +173,7 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .editor{border:2px solid var(--acento2)}
 .editor details summary{cursor:pointer}
 .editor .json{font-family:ui-monospace,monospace;font-size:13px}
+.cat-ej{display:inline-block;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--acento2);background:#e8eef5;border-radius:6px;padding:2px 8px;margin:2px 0 4px}
+.enunciado{font-size:15px;color:var(--suave);margin:4px 0 10px}
+.fila-img{display:flex;gap:12px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--linea)}
+.fila-img img{width:90px;height:90px;object-fit:contain;background:#fff;border:1px solid var(--linea);border-radius:8px}

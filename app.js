@@ -115,7 +115,7 @@ async function crearSupabase() {
       for (let i = 0; ; i += 1000) { const r = ok(await sb.from(tabla).select('*').order('id').range(i, i + 999)); out.push(...r); if (r.length < 1000) break; }
       return out;
     },
-    async subirMedio(file, path) { ok(await sb.storage.from('materiales').upload(path, file, { upsert: true, contentType: file.type || undefined })); },
+    async subirMedio(file, path, cache) { ok(await sb.storage.from('materiales').upload(path, file, { upsert: true, contentType: file.type || undefined, ...(cache ? { cacheControl: cache } : {}) })); cacheUrl.delete('materiales/' + path); },
     async alumnos() { return ok(await sb.from('perfiles').select('*').order('nombre')); },
     async renombrar(id, nombre) { ok(await sb.from('perfiles').update({ nombre }).eq('id', id)); },
     async actualizarPerfil(id, campos) { ok(await sb.from('perfiles').update(campos).eq('id', id)); },
@@ -726,7 +726,7 @@ async function vInicio() {
   } else if (sig.tipo === 'repasoDia') {
     const e0 = sig.ejercicio;
     card.append(h(`<div class="etq">Repaso de hoy · ${sig.k} de ${sig.n}</div>`));
-    card.append(h(`<p class="instr">${esc(e0.instrucciones)}</p>`));
+    card.append(h(`<div>${cabeceraEj(e0, e0.hab)}</div>`));
     card.append(h(`<div class="acciones"><a class="btn" data-flujo href="#/x/${e0.id}">Empezar →</a></div>`));
   } else if (sig.tipo === 'tarjetas') {
     card.append(h(`<div class="etq">Repaso de hoy · palabras</div>`));
@@ -734,7 +734,7 @@ async function vInicio() {
   } else {
     const e0 = sig.ejercicio;
     card.append(h(`<div class="etq">${sig.tipo === 'repaso' ? 'Repaso' : 'Siguiente ejercicio'} · ${esc(e0.hab)}</div>`));
-    card.append(h(`<p class="instr">${esc(e0.instrucciones)}</p>`));
+    card.append(h(`<div>${cabeceraEj(e0, e0.hab)}</div>`));
     card.append(h(`<div class="acciones"><a class="btn" data-flujo href="#/x/${e0.id}">Empezar →</a></div>`));
   }
   $app.append(card);
@@ -772,7 +772,7 @@ async function vEscenario(id) {
   const [ints, evs] = await Promise.all([api.misIntentos(), api.misEventos()]);
   const { m } = await cargarModelo(ints, evs);
   const pan = panorama(m);
-  const fila = (x, i) => `<a class="fila" href="#/x/${x.id}"><div class="num">${i + 1}</div><div class="txt"><b>${esc(x.instrucciones)}</b><small>${esc(x.id)} · ${esc(x.hab)}${x.nMostrar ? ` · banco de ${x.itemsBanco.length} preguntas, se muestran ${x.nMostrar}` : ''}</small></div></a>`;
+  const fila = (x, i) => `<a class="fila" href="#/x/${x.id}"><div class="num">${i + 1}</div><div class="txt"><b>${esc(x.titulo || x.instrucciones)}</b><small>${esc(x.id)} · ${esc(x.hab)}${x.nMostrar ? ` · banco de ${x.itemsBanco.length} preguntas, se muestran ${x.nMostrar}` : ''}</small></div></a>`;
   if (id === '_practica') {
     $app.innerHTML = `<div class="migas"><a href="#/">← Lecciones</a></div><h1>Práctica sin lección asignada</h1><p class="sub">Se usan en repasos y pruebas cuando el alumno ya conoce su regla.</p>`;
     $app.append(h(`<div class="lista">${pan.sinLeccion.map(fila).join('')}</div>`));
@@ -835,7 +835,7 @@ async function vEjercicio(id) {
     be.onclick = () => editarEjercicio(ej, c);
     $app.querySelector('.migas').append(be);
   }
-  const card = h(`<div class="tarjeta"><p class="instr">${esc(ej.instrucciones)}</p><div class="media"></div><div class="cuerpo"></div><div class="res"></div><div class="acciones"></div></div>`);
+  const card = h(`<div class="tarjeta">${cabeceraEj(ej)}<div class="media"></div><div class="cuerpo"></div><div class="res"></div><div class="acciones"></div></div>`);
   $app.append(card);
   const media = card.querySelector('.media');
   const esLectura = ['leer'].includes(c.tipo);
@@ -890,6 +890,14 @@ async function vEjercicio(id) {
     } catch (err) { res.append(h(`<p class="error">${esc(err.message || 'No se pudo guardar. Revisa tu conexión.')}</p>`)); bEnviar.disabled = false; }
   };
 }
+
+// Cabecera de un ejercicio: título corto, categoría y enunciado (o solo la instrucción si aún no tiene título)
+function cabeceraEj(ej, hab) {
+  if (!ej.titulo) return `<p class="instr">${esc(ej.instrucciones || '')}</p>`;
+  const cat = ej.categoria || hab || '';
+  return `<p class="instr">${esc(ej.titulo)}</p>${cat ? `<div class="cat-ej">${esc(cat)}</div>` : ''}${ej.instrucciones ? `<p class="enunciado">${esc(ej.instrucciones)}</p>` : ''}`;
+}
+const consignaEj = ej => [ej.titulo, ej.instrucciones].filter(Boolean).join('. ');
 
 // Explicación de una regla: texto con párrafos; las líneas que empiezan con «|» forman tablas.
 function explicacionHtml(txt) {
@@ -994,7 +1002,7 @@ const COLS = {
   escenarios: ['id','nombre','nivel','temas','orden','objetivo_comunicativo','gramatica_foco','pronunciacion_foco'],
   materiales: ['id','titulo','tipo','fuente','inicio','fin','nivel','escenarios','temas','gramatica_presente','transcripcion','licencia','origen','revisado','funcion'],
   tipos_ejercicio: ['id','nombre','descripcion','habilidades_principales','habilidades_secundarias','material','tipos_material_compatibles','generable_ia','equivalente_h5p','nivel_minimo'],
-  ejercicios: ['id','tipo_ejercicio','material','escenario','gramatica_objetivo','vocabulario_objetivo','instrucciones','contenido','prerrequisitos'],
+  ejercicios: ['id','tipo_ejercicio','material','escenario','gramatica_objetivo','vocabulario_objetivo','titulo','categoria','instrucciones','contenido','prerrequisitos'],
 };
 const ORDEN_IMPORT = ['habilidades','gramatica','pronunciacion','temas','vocabulario','escenarios','tipos_ejercicio','materiales','ejercicios'];
 
@@ -1073,7 +1081,7 @@ async function tAlumno(el, uid) {
     if (!pendZoom.length) zc.append(h(`<p class="sub">No hay ejercicios orales pendientes.</p>`));
     else {
       const tz = h(`<table style="margin-top:8px"></table>`);
-      pendZoom.forEach(e => tz.append(h(`<tr><td><input type="checkbox" value="${e.id}"></td><td><a href="#/x/${e.id}">${e.id}</a></td><td>${esc(e.instrucciones)}<br><small class="sub">${esc(m.esc.find(s => s.id === e.escenario)?.nombre || '')}</small></td></tr>`)));
+      pendZoom.forEach(e => tz.append(h(`<tr><td><input type="checkbox" value="${e.id}"></td><td><a href="#/x/${e.id}">${e.id}</a></td><td>${esc(e.titulo || e.instrucciones)}<br><small class="sub">${esc(m.esc.find(s => s.id === e.escenario)?.nombre || '')}</small></td></tr>`)));
       zc.append(tz);
       const b = h(`<div class="acciones"><button class="btn sec" type="button">Seleccionar todo</button><button class="btn" type="button">Marcar seleccionados como hechos</button><span class="estado sub"></span></div>`);
       const [bTodo, bOk] = b.querySelectorAll('button');
@@ -1172,7 +1180,7 @@ async function tRevisar(el) {
   for (const i of pend) {
     const ej = ejs[i.ejercicio_id]; const c = typeof ej.contenido === 'string' ? JSON.parse(ej.contenido) : ej.contenido;
     const card = h(`<div class="tarjeta"><div class="etq">${esc(nombre(i.alumno_id))} · ${new Date(i.creado_en).toLocaleString()} · <a href="#/x/${ej.id}">${ej.id}</a></div>
-      <p class="instr">${esc(ej.instrucciones)}</p>${c.criterios ? `<p class="sub">Criterios: ${esc(c.criterios)}</p>` : ''}
+      ${cabeceraEj(ej)}${c.criterios ? `<p class="sub">Criterios: ${esc(c.criterios)}</p>` : ''}
       ${i.respuesta?.texto ? `<div class="texto-ru">${esc(i.respuesta.texto)}</div>` : ''}<div class="aud"></div>
       <div class="campo"><label>Comentario para el alumno</label><textarea class="fb"></textarea></div>
       <div class="campo"><label>Producción correcta para el calendario (opcional: códigos V… y G…, «:0» = error)</label><textarea class="prod" style="min-height:70px"></textarea></div>
@@ -1196,6 +1204,7 @@ function editarFila(tabla, fila, campos, alGuardar, extra) {
     <div class="acciones"><button class="btn" type="button">Guardar</button><button class="btn sec" type="button">Cancelar</button></div><p class="ok-msg"></p></div>`);
   for (const [k, et, tipo] of campos) {
     const v = fila[k] ?? '';
+    if (Array.isArray(tipo)) { f.querySelector('.campos').append(h(`<div class="campo"><label>${esc(et)}</label><select data-k="${k}"><option value="">(automática)</option>${tipo.map(o => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select></div>`)); continue; }
     f.querySelector('.campos').append(h(`<div class="campo"><label>${esc(et)}</label>${tipo === 'area' || String(v).length > 70 ? `<textarea data-k="${k}" rows="${Math.min(14, 2 + String(v).split('\n').length)}">${esc(v)}</textarea>` : `<input type="text" data-k="${k}" value="${esc(v)}">`}</div>`));
   }
   if (extra) f.querySelector('.extra').append(extra.el);
@@ -1266,8 +1275,47 @@ function editorContenido(c) {
 }
 function editarEjercicio(ej, c) {
   const ed = editorContenido(c);
-  editarFila('ejercicios', ej, [['instrucciones', 'Instrucción (título del ejercicio)', 'area']], () => vEjercicio(ej.id),
-    { el: ed.el, valor: () => { const n = ed.valor(); return n ? { contenido: n } : {}; } });
+  const caja = h(`<div></div>`); caja.append(editorImagenes(ej, c), ed.el);
+  editarFila('ejercicios', ej, [['titulo', 'Título (corto)'], ['categoria', 'Tipo de ejercicio', HABILIDADES], ['instrucciones', 'Enunciado (subtítulo, letra más pequeña)', 'area']], () => vEjercicio(ej.id),
+    { el: caja, valor: () => { const n = ed.valor(); return n ? { contenido: n } : {}; } });
+}
+// Imágenes del ejercicio: reemplazar el archivo manteniendo el mismo nombre (Mxxx.jpg)
+function editorImagenes(ej, c) {
+  const idsImg = new Set([...ids(ej.material), ...(c.imagen ? [c.imagen] : [])]);
+  const recoger = x => { if (Array.isArray(x)) x.forEach(recoger); else if (x && typeof x === 'object') for (const [k, v] of Object.entries(x)) { if (k === 'img' && /^M\d+$/.test(v)) idsImg.add(v); else recoger(v); } };
+  recoger(c);
+  const el = h(`<details style="margin-bottom:10px"><summary><b>Imágenes del ejercicio</b> <span class="sub">(cargando…)</span></summary><p class="sub">«Reemplazar» borra la imagen anterior y sube la nueva con el mismo nombre. Se convierte a JPG automáticamente. Los alumnos la verán en unos minutos.</p><div class="imgs"></div></details>`);
+  (async () => {
+    const mats = (await api.materiales([...idsImg])).filter(m => m.tipo === 'imagen');
+    el.querySelector('summary .sub').textContent = `(${mats.length})`;
+    if (!mats.length) el.querySelector('.imgs').append(h(`<p class="sub">Este ejercicio no usa imágenes.</p>`));
+    for (const m of mats) {
+      const fila = h(`<div class="fila-img"><img alt=""><div><b>${esc(m.id)}</b> <span class="sub">${esc(m.titulo || '')}</span><br><input type="file" accept="image/*"> <button class="btn sec" type="button">Reemplazar</button> <span class="ok-msg"></span></div></div>`);
+      const img = fila.querySelector('img'), msg = fila.querySelector('.ok-msg');
+      api.url('materiales', `img/${m.id}.jpg`).then(u => { if (u) img.src = u; });
+      fila.querySelector('button').onclick = async ev => {
+        const file = fila.querySelector('input').files[0]; if (!file) { msg.textContent = 'Elige un archivo primero.'; return; }
+        ev.target.disabled = true; msg.textContent = 'Subiendo…';
+        try {
+          const jpg = await aJpg(file);
+          await api.subirMedio(jpg, `img/${m.id}.jpg`, '60');
+          img.src = URL.createObjectURL(jpg); msg.textContent = '✓ Reemplazada.';
+        } catch (e) { msg.textContent = '✗ ' + e.message; }
+        ev.target.disabled = false;
+      };
+      el.querySelector('.imgs').append(fila);
+    }
+  })();
+  return el;
+}
+// convierte cualquier imagen a JPG (máx. 1600 px de lado) para guardarla como Mxxx.jpg
+async function aJpg(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+  const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(bmp, 0, 0, cv.width, cv.height);
+  const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.88));
+  return new File([blob], 'imagen.jpg', { type: 'image/jpeg' });
 }
 function editarRegla(g, alGuardar) {
   const tabla = /^P/.test(g.id) ? 'pronunciacion' : 'gramatica';
@@ -1563,7 +1611,7 @@ async function generarExamen(nivel, opc = {}) {
   const cerradas = e => (cont(e).items || []).filter(i => ['choice', 'input'].includes(i.tipo) && !i.img);
   // léxico y gramática: preguntas sueltas de los bancos de vocabulario y gramática, como máximo 2 por ejercicio para variar los temas
   const lex = barajar(del.filter(e => ['vocabulario', 'gramática'].includes(e.hab) && !e.material && !cont(e).texto && cerradas(e).length))
-    .flatMap(e => barajar(cerradas(e)).slice(0, 2).map(i => ({ ...i, de: e.id, instr: e.instrucciones || '' })));
+    .flatMap(e => barajar(cerradas(e)).slice(0, 2).map(i => ({ ...i, de: e.id, instr: consignaEj(e) })));
   const lexico = lex.slice(0, opc.lexico || 30);
   const elegir = (hab, n) => barajar(del.filter(e => e.hab === hab && e.material && (cont(e).items || []).some(i => ['choice', 'input'].includes(i.tipo)))).slice(0, n).map(e => e.id);
   const abiertas = (oral) => barajar(del.filter(e => cont(e).tipo === 'abierta' && (oral ? ORALES.has(e.tipo_ejercicio) : !ORALES.has(e.tipo_ejercicio)))).slice(0, 1).map(e => e.id);
@@ -1627,7 +1675,7 @@ async function correrExamen(ex) {
   } else {
     for (const id of ex.preguntas[k] || []) {
       const ej = await api.ejercicio(id); const c = typeof ej.contenido === 'string' ? JSON.parse(ej.contenido) : ej.contenido;
-      const card = h(`<div class="tarjeta"><p class="instr">${esc(ej.instrucciones)}</p><div class="media"></div><div class="cuerpo"></div></div>`);
+      const card = h(`<div class="tarjeta">${cabeceraEj(ej)}<div class="media"></div><div class="cuerpo"></div></div>`);
       for (const m of await api.materiales(ids(ej.material))) card.querySelector('.media').append(await bloqueMaterial(m, true));
       const r = await renderizar(ej); card.querySelector('.cuerpo').append(r.el); bloques.push(r); cont.append(card);
       if (card.querySelector('input[type=text], textarea')) card.append(tecladoRuso(card));

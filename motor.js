@@ -59,7 +59,7 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
     const pr = lista(e.prerrequisitos);
     const gp = pr.filter(x => /^[GP]\d/.test(x));
     return {
-      ...e, hab: tipoHab[e.tipo_ejercicio] || 'gramática', gram: lista(e.gramatica_objetivo),
+      ...e, hab: (HABILIDADES.includes(e.categoria) && e.categoria) || tipoHab[e.tipo_ejercicio] || 'gramática', gram: lista(e.gramatica_objetivo),
       reqEj: pr.filter(x => /^EJ/.test(x)), reqReglas: cierre(gp), reqV: pr.filter(x => /^V\d/.test(x)),
       reqG: [...new Set([...lista(e.gramatica_objetivo), ...pr.filter(x => /^G\d/.test(x))])],
     };
