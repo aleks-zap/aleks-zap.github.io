@@ -142,7 +142,7 @@ async function crearDemo() {
     async registro() { return { session: null }; }, async recuperar() {}, async nuevaClave() {},
     async reportar(o) { console.log('reporte', o); }, async reportes() { return []; }, async resolverReporte() {},
     async evaluarPronunciacion() { return { total: 82, exactitud: 85, fluidez: 78, completitud: 100, palabras: [{ palabra: 'привет', nota: 92, error: 'None' }, { palabra: 'меня', nota: 64, error: 'Mispronunciation' }, { palabra: 'зовут', nota: 88, error: 'None' }] }; },
-    async generarRepaso(d0) { return { enunciado: 'Responde las preguntas con frases completas.', items: [{ pregunta: 'Какой у тебя дом?', palabras: d0.palabras.slice(0, 2).map(p => p.lema) }, { pregunta: 'Ты работаешь?', palabras: d0.palabras.slice(2).map(p => p.lema) }] }; },
+    async generarRepaso(d0) { return { enunciado: 'Responde las preguntas con frases completas.', items: [{ pregunta: 'Какой у тебя дом?', palabras: d0.palabras.slice(0, 2).map(p => p.lema), reglas: d0.reglas.map(g => g.nombre) }, { pregunta: 'Ты работаешь?', palabras: d0.palabras.slice(2).map(p => p.lema) }] }; },
     async ajustes() { return [{ clave: 'ia_activa', valor: new URLSearchParams(location.search).has('ia') }, { clave: 'pronunciacion_activa', valor: new URLSearchParams(location.search).has('pron') }, { clave: 'ia_tope_mensual_usd', valor: 5 }]; },
     async espacio() { return [{ tipo: 'base', nombre: 'base de datos', bytes: 61e6 }, { tipo: 'archivos', nombre: 'materiales', bytes: 640e6, archivos: 352 }, { tipo: 'archivos', nombre: 'grabaciones', bytes: 95e6, archivos: 40 }, { tipo: 'archivos', nombre: 'examenes', bytes: 110e6, archivos: 300 }]; }, async guardarAjuste() {}, async usoIA() { return []; }, async corregirIA() { return { puntaje: 100, feedback: '¡Muy bien! Sin errores.', errores: [] }; },
     async examenes() { return JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); },
@@ -943,7 +943,7 @@ function repasoEscrito(card, t, ids, m, vocab) {
   card.append(h(`<div><p class="instr">Repaso escrito</p><div class="cat-ej">escritura</div>${t.enunciado ? `<p class="enunciado">${esc(t.enunciado)}</p>` : ''}</div>`));
   const cuerpo = h(`<div></div>`); card.append(cuerpo);
   const resp = (t.items || []).map(it => {
-    const b = h(`<div class="item-escrito">${it.pregunta ? `<div class="texto-ru">${esc(it.pregunta)}</div>` : ''}<p class="sub">Palabras obligatorias: ${(it.palabras || []).map(w => `<b class="ru">${esc(w)}</b>`).join(', ')}</p><textarea rows="3" placeholder="Escribe en ruso"></textarea></div>`);
+    const b = h(`<div class="item-escrito">${it.pregunta ? `<div class="texto-ru">${esc(it.pregunta)}</div>` : ''}<p class="sub">Palabras obligatorias: ${(it.palabras || []).map(w => `<b class="ru">${esc(w)}</b>`).join(', ')}</p>${(it.reglas || []).length ? `<p class="sub">Regla a practicar: <b>${it.reglas.map(esc).join('</b>, <b>')}</b></p>` : ''}<textarea rows="3" placeholder="Escribe en ruso"></textarea></div>`);
     cuerpo.append(b); return b.querySelector('textarea');
   });
   cuerpo.after(tecladoRuso(card));
