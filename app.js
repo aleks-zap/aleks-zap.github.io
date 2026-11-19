@@ -641,7 +641,7 @@ function bienvenida(seguir) {
       <li><b>Repaso del día.</b> La plataforma te devuelve las palabras justo cuando empiezas a olvidarlas. Hazlo antes del material nuevo.</li>
       <li><b>Tus errores no se castigan:</b> sirven para saber qué repasar.</li>
       ${zoom ? '<li><b>Clase por Zoom.</b> Las tareas orales (hablar, presentarte, describir) se guardan para tu clase semanal con la profesora.</li>' : ''}
-      ${prueba ? '<li><b>Prueba gratis:</b> tienes las dos primeras lecciones completas: «Primeras palabras» (el alfabeto) y «Привет! Как тебя зовут?». Al terminarlas podrás elegir un plan.</li>' : ''}
+      ${prueba ? '<li><b>Prueba gratis:</b> tienes la primera lección completa: «Primeras palabras» (el alfabeto). Al terminarla podrás elegir un plan.</li>' : ''}
     </ol>
     <h3>Tus primeras lecciones</h3>
     <ul>
@@ -709,7 +709,7 @@ async function vInicio() {
   const rc = racha(intentos, eventos);
   if (rc.n) $app.querySelector('.sub').after(h(`<div class="racha ${rc.hoy ? '' : 'pend'}">🔥 <b>${rc.n}</b> ${rc.n === 1 ? 'día seguido' : 'días seguidos'}${rc.hoy ? '' : ' · practica hoy (cualquier actividad cuenta) para mantener tu racha'}</div>`));
   if (enPrueba()) {
-    $app.querySelector('.meta').textContent = 'Prueba gratis: las dos primeras lecciones completas (alfabeto, sonidos, saludos y presentaciones).';
+    $app.querySelector('.meta').textContent = 'Prueba gratis: la primera lección completa (alfabeto, sonidos, letra cursiva y primeras palabras).';
     if (sig.tipo === 'elegir' && sig.opciones.length) { await api.registrar('escenario', [sig.opciones[0].s.id]); return vInicio(); }   // sigue con la otra lección de la prueba
     if (['fin', 'elegir'].includes(sig.tipo)) { $app.append(tarjetaFinPrueba()); return; }
   } else {
@@ -1012,7 +1012,7 @@ function necesitaUbicacion(m, intentos, eventos) {
   if (eventos.some(v => v.tipo === 'ubicacion')) return false;
   // si ya avanzó más allá de la lección de prueba, no se pregunta. Al empezar (≤ 3 ejercicios) la pregunta es obligatoria;
   // si ya venía avanzando en las primeras lecciones (p. ej. desde la prueba gratis), solo se ofrece en una tarjeta que puede cerrar
-  if (intentos.some(i => { const e = m.porId.get(i.ejercicio_id); return e && e.escenario && !LECCIONES_PRUEBA.includes(e.escenario); })) return false;
+  if (intentos.some(i => { const e = m.porId.get(i.ejercicio_id); return e && e.escenario && !LECCIONES_INICIO.includes(e.escenario); })) return false;
   return new Set(intentos.map(i => i.ejercicio_id)).size <= 3 ? 'preguntar' : 'ofrecer';
 }
 function preguntaUbicacion() {
@@ -1361,7 +1361,7 @@ async function tAlumno(el, uid) {
   const zt = h(`<label style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" ${p.orales_zoom ? 'checked' : ''}> Parte oral por Zoom: los ejercicios orales no se le muestran y van a la lista de la clase</label>`);
   zt.querySelector('input').onchange = async e => { await api.actualizarPerfil(uid, { orales_zoom: e.target.checked }); location.reload(); };
   el.append(zt);
-  const PL = [['prueba', 'Prueba gratis (solo dos primeras lecciones)'], ['plataforma', 'Esencial'], ['pro', 'Pro (con examen y certificado)'], ['nivel', 'Un nivel (pago único, sin vencimiento)'], ['completo', 'Acceso completo (igual que Esencial, sin vencimiento)'],
+  const PL = [['prueba', 'Prueba gratis (solo primera lección)'], ['plataforma', 'Esencial'], ['pro', 'Pro (con examen y certificado)'], ['nivel', 'Un nivel (pago único, sin vencimiento)'], ['completo', 'Acceso completo (igual que Esencial, sin vencimiento)'],
     ...[['zoom_grupal', 'Plataforma + Zoom grupal (anterior)'], ['zoom_individual', 'Plataforma + Zoom individual (anterior)']].filter(([k]) => p.plan === k)];
   const pf = h(`<div class="campo" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end"><div><label>Plan</label><select>${PL.map(([k, t]) => `<option value="${k}" ${p.plan === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
     <div data-niv ${p.plan === 'nivel' ? '' : 'hidden'}><label>Nivel comprado</label><select>${['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map(n => `<option ${p.plan_nivel === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
@@ -1792,7 +1792,7 @@ function seccionPlanes() {
   const ops = NIVELES_TODOS.map(n => `<option value="${n}" ${NIVELES_A_LA_VENTA.includes(n) ? '' : 'disabled'}>${n}${NIVELES_A_LA_VENTA.includes(n) ? '' : ' (próximamente)'}</option>`).join('');
   const el = h(`<div><div class="planes">
     <div class="plan"><h3>Prueba gratis</h3><div class="precio">$0</div><div class="sub">Sin tarjeta</div>
-      <ul><li>Las dos primeras lecciones completas: alfabeto, sonidos, saludos y presentaciones</li><li>Ejercicios con corrección inmediata</li><li>Repaso de palabras con voz rusa</li></ul>
+      <ul><li>Primera lección completa: alfabeto, sonidos, letra cursiva y primeras palabras</li><li>Ejercicios con corrección inmediata</li><li>Repaso de palabras con voz rusa</li></ul>
       <a class="btn sec" href="#/registro">Empieza gratis</a></div>
     <div class="plan dest"><div class="etq">Suscripción</div><h3>Esencial</h3>
       <div class="campo"><select data-per aria-label="Periodo"><option value="mensual">Pago mensual</option><option value="anual">Pago anual</option></select></div>
@@ -1824,7 +1824,7 @@ function vPublico() {
   nav();
   $app.innerHTML = `<section class="heroe"><h1>Aprende ruso desde cero, a tu ritmo</h1>
     <p class="grande">Curso para hispanohablantes: lecciones cortas que se ordenan solas según lo que ya sabes, repaso inteligente de palabras y corrección inmediata de lo que escribes.</p>
-    <div class="acciones"><a class="btn" href="#/registro">Prueba gratis las primeras lecciones</a><a class="btn sec" href="#/entrar">Ya tengo cuenta</a></div></section>
+    <div class="acciones"><a class="btn" href="#/registro">Prueba gratis la primera lección</a><a class="btn sec" href="#/entrar">Ya tengo cuenta</a></div></section>
     <section class="ventajas">
       <div><b>🧭 Ruta personal</b><p>La plataforma decide la siguiente tarea según tu avance: nunca ves una palabra o regla que no te hayan enseñado.</p></div>
       <div><b>🔁 Repaso que no olvida</b><p>Cada día empiezas por lo que estás a punto de olvidar. Ves en cuántos días tendrás tu nivel.</p></div>
@@ -1845,14 +1845,14 @@ function vPagar() {
   const aviso = plan === 'nivel' ? `<p class="sub">La compra de un nivel cubre solo las lecciones del nivel ${nivel}, sin vencimiento, mientras la plataforma esté en funcionamiento. Después del pago puedes hacer una prueba de ubicación: si ya dominas parte del nivel, empiezas desde ese punto y el precio es el mismo; si tu nivel es otro, puedes cambiar de nivel antes de empezar o pedir el reembolso dentro de 15 días.</p>` : '';
   $app.innerHTML = `<div class="tarjeta"><h1>Tu plan</h1><p><b>${esc(desc)}</b></p>${aviso}
     <p>El pago en línea estará disponible muy pronto.</p>
-    ${sesion ? '' : `<p>Mientras tanto, crea tu cuenta gratis y empieza con las primeras lecciones: tu progreso se guarda.</p><div class="acciones"><a class="btn" href="#/registro">Crear cuenta</a><a class="btn sec" href="#/entrar">Ya tengo cuenta</a></div>`}
+    ${sesion ? '' : `<p>Mientras tanto, crea tu cuenta gratis y empieza con la primera lección: tu progreso se guarda.</p><div class="acciones"><a class="btn" href="#/registro">Crear cuenta</a><a class="btn sec" href="#/entrar">Ya tengo cuenta</a></div>`}
     <p class="sub"><a href="#/planes">← Ver todos los planes</a></p></div>`;
 }
 
 function vRegistro(msg = '') {
   nav();
   $app.innerHTML = '';
-  const f = h(`<form class="tarjeta login"><h1>Crea tu cuenta</h1><p class="sub">Gratis: incluye las dos primeras lecciones completas.</p>
+  const f = h(`<form class="tarjeta login"><h1>Crea tu cuenta</h1><p class="sub">Gratis: incluye la primera lección completa.</p>
     <div class="campo"><label>Tu nombre</label><input required autocomplete="name"></div>
     <div class="campo"><label>Correo</label><input type="email" required autocomplete="email"></div>
     <div class="campo"><label>Contraseña (mínimo 8 caracteres)</label><input type="password" required minlength="8" autocomplete="new-password"></div>
@@ -1897,8 +1897,9 @@ function vNuevaClave() {
   $app.append(f);
 }
 
-// Plan del alumno: 'prueba' solo abre las dos primeras lecciones (alfabeto y saludos)
-const LECCIONES_PRUEBA = ['E01', 'E03'];
+// Plan del alumno: 'prueba' solo abre la primera lección (alfabeto). LECCIONES_INICIO = las que no cuentan como «ya avanzó» para la prueba de ubicación
+const LECCIONES_PRUEBA = ['E01'];
+const LECCIONES_INICIO = ['E01', 'E03'];
 function enPrueba() {
   if (!perfil || perfil.rol === 'docente') return false;
   if (perfil.plan === 'prueba') return true;
@@ -1908,7 +1909,7 @@ function enPrueba() {
 function tarjetaFinPrueba() {
   const vencido = perfil?.plan && perfil.plan !== 'prueba';
   return h(`<div class="tarjeta"><div class="etq">${vencido ? 'Tu plan terminó' : 'Terminaste tu prueba gratis 🎉'}</div>
-    <h2 style="margin-top:4px">${vencido ? 'Renueva para seguir avanzando' : '¡Ya sabes leer en ruso, saludar y presentarte!'}</h2>
+    <h2 style="margin-top:4px">${vencido ? 'Renueva para seguir avanzando' : '¡Ya sabes leer en ruso!'}</h2>
     <p>Para seguir con las siguientes lecciones y el repaso diario, elige una suscripción o compra un nivel. Tu progreso se guarda.</p>
     <div class="acciones"><a class="btn" href="#/planes">Ver planes</a></div></div>`);
 }
