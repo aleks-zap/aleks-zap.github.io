@@ -28,7 +28,7 @@ const cacheUrl = new Map();
 const api = DEMO ? await crearDemo() : await crearSupabase();
 
 async function crearSupabase() {
-  const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+  const { createClient } = await import('./supabase.mjs')   // copia propia (v2.119.1): no depende de un CDN externo al abrir;
   sb = createClient(SUPABASE_URL, SUPABASE_KEY);
   const ok = r => { if (r.error) throw r.error; return r.data; };
   return {
@@ -680,7 +680,8 @@ async function vInicio() {
     return;
   }
   if (!intentos.length && !guiaVista('bienvenida')) return bienvenida(vInicio);   // primer ingreso: cómo funciona la plataforma
-  if (necesitaUbicacion(m, intentos, eventos)) return preguntaUbicacion();
+  const ubic = necesitaUbicacion(m, intentos, eventos);
+  if (ubic === 'preguntar') return preguntaUbicacion();
   if (m.alertaUbicacion) await avisarMalaUbicacion(m);
   let est = estadoAlumno(m), sig = siguienteTarea(m);
   if (sig.tipo === 'iniciar') {                       // primer escenario: se fija sin preguntar
@@ -720,7 +721,7 @@ async function vInicio() {
       $app.append(h(`<div class="tarjeta"><div class="etq">Examen de suficiencia · ${esc(logrado)}</div><p>Ya dominas el nivel ${esc(logrado)}. 🎉 El examen y el certificado son parte del plan <b>Pro</b>, que estará disponible muy pronto.</p></div>`));
     } else if (logrado && !certs.some(c => c.nivel === logrado)) {
       const ex = exs.find(x => x.nivel === logrado && x.estado !== 'anulado');
-      $app.append(h(`<div class="tarjeta"><div class="etq">Examen de suficiencia · ${esc(logrado)}</div>${ex ? `<p>${ex.estado === 'en_curso' ? 'Tienes un examen sin terminar.' : ex.estado === 'entregado' ? 'Examen entregado: tu profesora lo está calificando.' : ex.aprobado ? 'Aprobado: tu certificado se está emitiendo.' : 'Calificado: no alcanzaste el mínimo en alguna parte. Puedes volver a intentarlo.'}</p>` : `<p>Ya dominas el nivel ${esc(logrado)}. Rinde el examen para obtener tu certificado.</p>`}
+      $app.append(h(`<div class="tarjeta"><div class="etq">Examen de suficiencia · ${esc(logrado)}</div>${ex ? `<p>${ex.estado === 'en_curso' ? 'Tienes un examen sin terminar.' : ex.estado === 'entregado' ? 'Examen entregado: tu profesora lo está calificando.' : ex.aprobado ? 'Aprobado: tu certificado se está emitiendo.' : 'Calificado: no alcanzaste el mínimo en alguna parte. Puedes volver a intentarlo.'}</p>` : `<p>Ya dominas el nivel ${esc(logrado)}. Rinde el examen para obtener tu certificado (solo desde una computadora con cámara).</p>`}
         ${!ex || ex.estado === 'en_curso' || (ex.estado === 'calificado' && !ex.aprobado) ? `<div class="acciones"><a class="btn sec" href="#/examen?nivel=${esc(logrado)}">${ex?.estado === 'en_curso' ? 'Continuar examen' : 'Rendir examen'}</a></div>` : ''}</div>`));
     }
   }
@@ -798,6 +799,12 @@ async function vInicio() {
     card.append(h(`<div class="etq">${sig.tipo === 'repaso' ? 'Repaso' : 'Siguiente ejercicio'} · ${esc(e0.hab)}</div>`));
     card.append(h(`<div>${cabeceraEj(e0, e0.hab)}</div>`));
     card.append(h(`<div class="acciones"><a class="btn" data-flujo href="#/x/${e0.id}">Empezar →</a></div>`));
+  }
+  if (ubic === 'ofrecer' && !enFlujo) {
+    const o = h(`<div class="tarjeta"><div class="etq">¿Ya sabías ruso de antes?</div><p>Si ya estudiaste ruso, una prueba corta de ubicación (unos 15 minutos) te lleva a la lección que te corresponde, sin repetir lo que ya sabes.</p>
+      <div class="acciones"><a class="btn sec" href="#/ubicacion">Hacer la prueba</a><button class="btn sec" type="button">No, sigo desde aquí</button></div></div>`);
+    o.querySelector('button').onclick = async ev => { ev.target.disabled = true; try { await api.registrar('ubicacion', ['no']); o.remove(); } catch { ev.target.disabled = false; } };
+    $app.append(o);
   }
   if (perfil?.plan === 'nivel' && !m.saltados.size && m.nuevasAnteriores.length > 3 && !m.respuestaCambio) { const tc = tarjetaCambioNivel(m); if (tc) $app.append(tc); }
   $app.append(card);
@@ -1003,13 +1010,15 @@ const PLANES_PAGADOS = ['plataforma', 'pro', 'nivel', 'completo', 'zoom_grupal',
 function necesitaUbicacion(m, intentos, eventos) {
   if (!perfil || perfil.rol === 'docente' || !PLANES_PAGADOS.includes(perfil.plan) || enPrueba()) return false;
   if (eventos.some(v => v.tipo === 'ubicacion')) return false;
-  // solo al empezar: si ya avanzó más allá de la lección de prueba, no se pregunta
-  return !intentos.some(i => { const e = m.porId.get(i.ejercicio_id); return e && e.escenario && e.escenario !== LECCION_PRUEBA; });
+  // si ya avanzó más allá de la lección de prueba, no se pregunta. Al empezar (≤ 3 ejercicios) la pregunta es obligatoria;
+  // si ya venía avanzando en la primera lección (p. ej. desde la prueba gratis), solo se ofrece en una tarjeta que puede cerrar
+  if (intentos.some(i => { const e = m.porId.get(i.ejercicio_id); return e && e.escenario && e.escenario !== LECCION_PRUEBA; })) return false;
+  return new Set(intentos.map(i => i.ejercicio_id)).size <= 3 ? 'preguntar' : 'ofrecer';
 }
 function preguntaUbicacion() {
   $app.innerHTML = '';
   const c = h(`<div class="tarjeta"><h1>¿Ya tienes algún nivel de ruso?</h1>
-    <p>Si ya estudiaste ruso antes, haz una prueba corta de ubicación (20–25 minutos) para no repetir lo que ya sabes. Si empiezas desde cero, sigue directo con las lecciones.</p>
+    <p>Si ya estudiaste ruso antes, haz una prueba corta de ubicación (unos 15 minutos) para no repetir lo que ya sabes. Si empiezas desde cero, sigue directo con las lecciones.</p>
     <div class="acciones"><a class="btn" href="#/ubicacion">Sí, ya sé algo: hacer la prueba</a><button class="btn sec" type="button">No, empiezo desde cero</button></div><p class="error"></p></div>`);
   c.querySelector('button').onclick = async ev => {
     ev.target.disabled = true;
@@ -1024,49 +1033,61 @@ async function vUbicacion() {
   if (eventos.some(v => v.tipo === 'ubicacion')) { location.hash = '#/'; return; }
   const { m } = await cargarModelo(intentos, eventos, !!perfil?.orales_zoom);
   const pan = panorama(m);
-  // 2 preguntas autocorregibles por lección, en el orden del curso (sin imágenes ni textos de lectura que falten)
-  const lecciones = m.esc.map(s0 => {
-    const cand = [];
-    for (const e of pan.porLeccion.get(s0.id).orden) {
-      if (!e.autoc || ids(e.material).length) continue;
-      const c = typeof e.contenido === 'string' ? JSON.parse(e.contenido) : (e.contenido || {});
-      if (c.texto) continue;
-      for (const it of c.items || []) if (!it.img && ['choice', 'input'].includes(it.tipo)) cand.push({ it, banco: c.banco, e });
-    }
-    return { s: s0, items: barajar(cand).slice(0, 2) };
-  });
-  const t0 = Date.now(), MAX_MIN = 15;
-  let li = 0, qi = 0, entrada = null; const res = [], reglasVistas = [], log = [];
+  // Banco propio de la prueba (ubicacion.json): grupos de lecciones en orden del curso, preguntas de opción múltiple
+  // con instrucción clara. Solo cuentan los grupos cuyas lecciones tiene el plan del alumno.
+  const banco = await fetch('ubicacion.json').then(r => r.json());
+  const orden = new Map(m.esc.map((s0, i) => [s0.id, i]));
+  const grupos = banco.grupos.map(g => ({ ...g, lecciones: g.lecciones.filter(id => orden.has(id)), preguntas: barajar(g.preguntas) }))
+    .filter(g => g.lecciones.length && g.preguntas.length).sort((x, y) => orden.get(x.lecciones[0]) - orden.get(y.lecciones[0]));
+  const lecciones = m.esc.map(s0 => ({ s: s0 }));
+  const t0 = Date.now(), MAX_MIN = 5, SEG = 20;
+  // Búsqueda rápida: se avanza saltando grupos (1, 2, 4, 8…) mientras acierta; al primer grupo fallado se busca
+  // entre el último aprobado y ese (búsqueda binaria). Cada grupo: 2 preguntas; si acierta 1 de 2, decide una 3.ª.
+  let lo = 0, hi = grupos.length, paso = 1, gi = 0, galope = true, enGrupo = [];
+  let entrada = null; const res = [], log = [];
   const intro = h(`<div class="tarjeta"><h1>Prueba de ubicación</h1>
-    <p>Tiene dos partes:</p><ol><li><b>Preguntas</b> (hasta ${MAX_MIN} minutos): empiezan muy fáciles y van subiendo. La prueba se detiene sola cuando las preguntas ya son de lo que aún no sabes.</li><li><b>Texto «Sobre mí»</b> (10 minutos): escribe en ruso todo lo que puedas sobre ti.</li></ol>
+    <p>Tiene dos partes:</p><ol><li><b>Preguntas</b> (unos ${MAX_MIN} minutos, ${SEG} segundos por pregunta): saltan de lo más fácil a lo más difícil y se detienen solas cuando encuentran tu nivel.</li><li><b>Texto «Sobre mí»</b> (10 minutos): escribe en ruso todo lo que puedas sobre ti.</li></ol>
     <div class="aviso-prueba"><p><b>Importante: hazla sin ayuda.</b> No uses diccionarios, traductores, inteligencia artificial ni otras herramientas externas. La prueba decide desde qué lección empiezas: si te ayudas, te ubicará en lecciones demasiado difíciles, te saltarás cosas que aún no sabes y te costará más aprender después.</p>
-    <p>Por el mismo motivo, <b>si no sabes una respuesta, pulsa «No lo sé»</b> (o escribe «no sé»). No adivines: un «no sé» honesto vale más que un acierto por suerte.</p></div>
+    <p>Por el mismo motivo, <b>si no sabes una respuesta, pulsa «No lo sé»</b>. No adivines: un «no sé» honesto vale más que un acierto por suerte.</p></div>
     <div class="acciones"><button class="btn" type="button">Empezar</button><a class="btn sec" href="#/">Ahora no</a></div></div>`);
   intro.querySelector('button').onclick = () => siguiente();
   $app.innerHTML = ''; $app.append(intro);
+  let reloj = null;
+  function cerrarGrupo(aprobado) {
+    if (galope) {
+      if (aprobado) { lo = gi + 1; paso *= 2; gi = Math.min(grupos.length - 1, gi + paso); if (lo >= grupos.length) hi = lo; else if (gi < lo) gi = lo; }
+      else { hi = gi; galope = false; }
+    } else if (aprobado) lo = gi + 1; else hi = gi;
+    if (!galope && lo < hi) gi = Math.floor((lo + hi) / 2);
+    if (galope && lo >= grupos.length) hi = lo;
+    enGrupo = [];
+  }
   function siguiente() {
-    // ¿hay que detenerse?
-    const ult = res.slice(-4);
-    if (Date.now() - t0 > MAX_MIN * 60e3) entrada ??= li;
-    if (ult.length === 4 && ult.filter(x => !x).length >= 3) entrada ??= li;
-    while (entrada == null && li < lecciones.length && qi >= lecciones[li].items.length) {
-      const L = lecciones[li], r = L.res || [];
-      if (r.length && r.every(x => !x)) { entrada = li; break; }       // falló las 2 de esta lección
-      li++; qi = 0;
+    clearInterval(reloj);
+    if (lo >= hi || Date.now() - t0 > MAX_MIN * 60e3) {
+      const g = grupos[lo];
+      entrada = g ? orden.get(g.lecciones[0]) : lecciones.length;
+      return parte2();
     }
-    if (entrada == null && li >= lecciones.length) entrada = lecciones.length;
-    if (entrada != null) return parte2();
-    const L = lecciones[li], { it, banco, e } = L.items[qi];
-    e.reqReglas.forEach(g => { if (!reglasVistas.includes(g)) reglasVistas.push(g); });
-    const r = rItems({ items: [it], banco });
-    const card = h(`<div class="tarjeta"><div class="etq">Parte 1 de 2 · pregunta ${res.length + 1}</div><div class="cuerpo"></div><div class="acciones"><button class="btn" type="button">Siguiente</button><button class="btn sec" type="button">No lo sé</button></div></div>`);
+    const G = grupos[gi], k = enGrupo.length;
+    const it = G.preguntas[k % G.preguntas.length];
+    const item = { tipo: 'choice', q: it.q, options: it.o, answer: it.o[0] };
+    const r = rItems({ items: [item] });
+    const card = h(`<div class="tarjeta"><div class="etq">Parte 1 de 2 · pregunta ${res.length + 1} · <span data-s>${SEG}</span> s</div><p class="instr">${esc(it.i)}</p><div class="cuerpo"></div><div class="acciones"><button class="btn" type="button">Siguiente</button><button class="btn sec" type="button">No lo sé</button></div></div>`);
+    if (!it.q) r.el.querySelector('.q')?.remove();
     card.querySelector('.cuerpo').append(r.el);
-    if (it.tipo === 'input') card.querySelector('.cuerpo').after(tecladoRuso(card));
-    const responder = (ok, resp) => { (L.res ||= []).push(ok); res.push(ok); log.push({ leccion: L.s.id, ej: e.id, q: it.q || '', respuesta: resp, ok }); qi++; siguiente(); };
+    const responder = (ok, resp) => {
+      clearInterval(reloj);
+      enGrupo.push(ok); res.push(ok); log.push({ leccion: G.lecciones.join('–'), q: [it.i, it.q].filter(Boolean).join(' '), respuesta: resp, ok });
+      const bien = enGrupo.filter(Boolean).length, mal = enGrupo.length - bien;
+      if (bien >= 2) cerrarGrupo(true); else if (mal >= 2) cerrarGrupo(false);
+      siguiente();
+    };
     const [bS, bN] = card.querySelectorAll('.acciones .btn');
-    const leer = () => it.tipo === 'choice' ? (card.querySelector('input:checked')?.value ?? '') : [...card.querySelectorAll('.cuerpo input[type=text]')].map(x => x.value).join(' / ');
-    bS.onclick = () => { const v = leer(); if (/^\s*(no\s*s[eé]|не\s*знаю)\s*$/i.test(v)) return responder(false, 'no sé'); const x = r.corregir(); responder(x.bien === x.total, v); };
+    bS.onclick = () => { const v = card.querySelector('input:checked')?.value; if (v == null) return responder(false, 'no sé'); responder(v === item.answer, v); };
     bN.onclick = () => responder(false, 'no sé');
+    const fin = Date.now() + SEG * 1000;
+    reloj = setInterval(() => { const q = Math.max(0, Math.ceil((fin - Date.now()) / 1000)); const e = card.querySelector('[data-s]'); if (e) e.textContent = q; if (!q) responder(false, 'sin tiempo'); }, 500);
     $app.innerHTML = ''; $app.append(card);
   }
   function parte2() {
@@ -1096,7 +1117,7 @@ async function vUbicacion() {
           } catch { /* sin IA: vale solo la parte 1 */ }
         }
         $app.innerHTML = `<div class="tarjeta"><h1>¡Listo! 🎉</h1>${saltadas.length
-          ? `<p>Empiezas en <b>${esc(prueba.entrada)}</b>. Damos por sabidas las palabras y reglas de ${saltadas.length === 1 ? 'la lección anterior' : `las ${saltadas.length} lecciones anteriores`}: si más adelante te equivocas en alguna, te la volvemos a presentar y la repasamos contigo.</p>`
+          ? `<p>${eEntrada ? `Empiezas en <b>${esc(prueba.entrada)}</b>` : 'Ya dominas todas las lecciones disponibles: seguirás con tu repaso diario'}. Damos por sabidas las palabras y reglas de ${saltadas.length === 1 ? 'la lección anterior' : `las ${saltadas.length} lecciones anteriores`}: si más adelante te equivocas en alguna, te la volvemos a presentar y la repasamos contigo.</p>`
           : `<p>Empiezas desde la primera lección: así construyes una base sólida.</p>`}
           ${dominadas.length ? `<p>Además, en tu texto ya usas bien ${dominadas.length === 1 ? 'una regla' : `${dominadas.length} reglas`} de lecciones más avanzadas: te saltarás los ejercicios que solo practican eso.</p>` : ''}
           <div class="acciones"><a class="btn" href="#/">Ir a mis lecciones →</a></div></div>`;
@@ -2035,10 +2056,19 @@ async function generarExamen(nivel, opc = {}) {
   return { lexico: { items: lexico }, lectura: elegir('lectura', 2), audicion: elegir('escucha', 2), escritura: abiertas(false), oral: abiertas(true) };
 }
 
+// el examen solo se rinde en computadora (no celular ni tablet; el iPad se presenta como Mac pero tiene pantalla táctil)
+function esComputadora() {
+  if (navigator.userAgentData?.mobile) return false;
+  const ua = navigator.userAgent;
+  if (/Android|iPhone|iPad|iPod|Mobile|Silk|Kindle|Tablet/i.test(ua)) return false;
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return false;
+  return true;
+}
 async function vExamen() {
   if (!planConCertificado()) { nav('inicio'); $app.innerHTML = `<div class="tarjeta"><h1>Examen de suficiencia</h1><p>El examen y el certificado son parte del plan <b>Pro</b>, que estará disponible muy pronto.</p><div class="acciones"><a class="btn sec" href="#/">← Volver</a></div></div>`; return; }
   nav('inicio');
   const nivel = new URLSearchParams(location.hash.split('?')[1] || '').get('nivel') || 'A1';
+  if (!esComputadora()) { $app.innerHTML = `<div class="migas"><a href="#/">← Inicio</a></div><div class="tarjeta"><h1 style="margin-top:0">Examen de suficiencia · nivel ${esc(nivel)}</h1><p>💻 El examen solo se puede rendir <b>desde una computadora</b> (Windows, Mac o Linux) con cámara. Entra a la plataforma desde una computadora para empezarlo o continuarlo.</p><div class="acciones"><a class="btn sec" href="#/">← Volver</a></div></div>`; return; }
   const previos = await api.examenes();
   const enCurso = previos.find(x => x.estado === 'en_curso' && x.nivel === nivel);
   if (!enCurso) {
@@ -2048,13 +2078,17 @@ async function vExamen() {
       <li>Se usa tu cámara durante todo el examen y se guardan fotos cada minuto para revisión. Las fotos se borran automáticamente 30 días después del examen (plazo para revisión o apelación).</li>
       <li>El examen se hace en pantalla completa. Salir de ella, cambiar de pestaña o abrir otro programa queda registrado como incidencia.</li>
       <li>No se puede copiar ni pegar. No uses diccionarios, traductores ni ayuda de otras personas.</li>
-      <li>Usa una computadora con cámara, en un lugar tranquilo y con buena luz. Las partes escrita y oral las califica tu profesora.</li></ul>
+      <li><b>Sin cámara no hay examen:</b> si no das permiso a la cámara, el examen no empieza; si la cámara se apaga durante el examen, la prueba se bloquea hasta que la vuelvas a activar (el tiempo sigue corriendo).</li>
+      <li>Solo desde computadora (no celular ni tablet), con cámara, en un lugar tranquilo y con buena luz. Las partes escrita y oral las califica tu profesora.</li></ul>
       <label class="sub" style="display:flex;gap:8px"><input type="checkbox" id="acepto" style="width:auto"> Acepto las condiciones y la grabación de fotos de la cámara durante el examen.</label>
       <p class="error"></p><div class="acciones"><button class="btn" type="button" disabled>Empezar examen</button></div></div>`;
     const bt = $app.querySelector('.acciones .btn'), ch = $app.querySelector('#acepto');
     ch.onchange = () => bt.disabled = !ch.checked;
     bt.onclick = async () => {
       bt.disabled = true;
+      // la cámara es obligatoria: se pide el permiso antes de crear el examen
+      try { (await navigator.mediaDevices.getUserMedia({ video: true, audio: false })).getTracks().forEach(t => t.stop()); }
+      catch (e) { $app.querySelector('.error').innerHTML = 'Sin cámara no se puede rendir el examen. Permite el acceso a la cámara en tu navegador (ícono 🔒 o 📷 junto a la dirección) y en tu sistema, y vuelve a pulsar «Empezar examen».'; bt.disabled = false; return; }
       try {
         const preguntas = await generarExamen(nivel);
         if (!preguntas.lexico.items.length) throw new Error('Aún no hay suficiente contenido de este nivel para armar el examen.');
@@ -2123,19 +2157,34 @@ async function iniciarVigilancia(ex) {
   if (window.__vig && window.__vig.id === ex.id) return window.__vig;
   const vig = { id: ex.id, incidencias: ex.incidencias || [], stream: null, timer: null };
   const nota = (tipo) => { vig.incidencias.push({ tipo, t: new Date().toISOString() }); };
-  try {
-    vig.stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 }, audio: false });
-    const v = h(`<video class="cam" autoplay muted playsinline></video>`); v.srcObject = vig.stream; document.body.append(v);
-    const foto = async () => {
-      try {
-        const cv = document.createElement('canvas'); cv.width = 320; cv.height = 240; cv.getContext('2d').drawImage(v, 0, 0, 320, 240);
-        const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.6));
-        await api.subirFotoExamen(blob, `${sesion.user.id}/${ex.id}/${Date.now()}.jpg`);
-      } catch (e) { nota('foto_fallida'); }
+  // cámara obligatoria: sin ella el examen queda bloqueado (al empezar o si se apaga a mitad)
+  const v = h(`<video class="cam" autoplay muted playsinline></video>`); document.body.append(v);
+  const bloqueo = (msg) => new Promise(resolve => {
+    const o = h(`<div class="felicidades bloqueo-cam"><div class="caja"><div class="copa">📷</div><h2>La cámara es obligatoria</h2><p>${msg}</p>
+      <p class="sub">Permite el acceso a la cámara en tu navegador (ícono 🔒 o 📷 junto a la dirección) y en tu sistema. ${ex.respuestas && Object.keys(ex.respuestas).length ? 'El tiempo de la parte sigue corriendo.' : ''}</p>
+      <p class="error"></p><div class="acciones" style="justify-content:center"><button class="btn" type="button">Activar cámara y continuar</button></div></div></div>`);
+    o.querySelector('button').onclick = async () => {
+      try { await conectar(); o.remove(); resolve(); }
+      catch (e) { o.querySelector('.error').textContent = 'Todavía no hay acceso a la cámara.'; }
     };
-    setTimeout(foto, 3000); vig.timer = setInterval(foto, 60000);
-    vig.stream.getVideoTracks()[0].onended = () => nota('camara_apagada');
-  } catch (e) { nota('sin_camara'); }
+    document.body.append(o);
+  });
+  const conectar = async () => {
+    vig.stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 }, audio: false });
+    v.srcObject = vig.stream;
+    vig.stream.getVideoTracks()[0].onended = () => { nota('camara_apagada'); bloqueo('Tu cámara se apagó. Actívala para seguir con el examen.'); };
+  };
+  try { await conectar(); }
+  catch (e) { nota('sin_camara'); await bloqueo('Sin cámara no se puede continuar el examen.'); }
+  const foto = async () => {
+    try {
+      if (!vig.stream?.active) throw new Error('sin cámara');
+      const cv = document.createElement('canvas'); cv.width = 320; cv.height = 240; cv.getContext('2d').drawImage(v, 0, 0, 320, 240);
+      const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.6));
+      await api.subirFotoExamen(blob, `${sesion.user.id}/${ex.id}/${Date.now()}.jpg`);
+    } catch (e) { nota('foto_fallida'); }
+  };
+  setTimeout(foto, 3000); vig.timer = setInterval(foto, 60000);
   try { await document.documentElement.requestFullscreen?.(); } catch (e) { nota('sin_pantalla_completa'); }
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) nota('salio_de_pantalla_completa'); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) nota('cambio_de_pestana_o_programa'); });

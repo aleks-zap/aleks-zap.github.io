@@ -572,12 +572,17 @@ export function proyeccion(m) {
     if (r > 0) dias = Math.max(dias, (1 - x) / r);
     else if (x < 0.85) dias = Infinity;                          // casi completo: una oscilación no frena la estimación
   });
+  // sin ninguna palabra activa o regla dominada todavía (se dominan al acertarlas en 2 días distintos) no hay ritmo que medir
+  const sinDominio = !Number.isFinite(dias) && (d.act === 0 || d.regOk === 0);
   dias = Number.isFinite(dias) ? Math.max(1, Math.ceil(dias)) : null;
-  return { nivel: actual, logrado, dias, hechos, frac: d.frac, dom: d, ritmo };
+  return { nivel: actual, logrado, dias, hechos, frac: d.frac, dom: d, ritmo, sinDominio };
 }
 export function textoProyeccion(p, { alumno = true } = {}) {
   const pre = p.logrado ? `¡${alumno ? 'Ya tienes' : 'Ya tiene'} el nivel ${p.logrado} de ruso! 🎉 ` : '';
   if (p.completo) return `${pre}${p.siguiente ? `El nivel ${p.siguiente} llegará pronto.` : ''}`;
+  if (p.dias == null && p.sinDominio) return alumno
+    ? `${pre}Llevas ${p.hechos} ejercicios. 💪 Calcularemos cuándo tendrás el nivel ${p.nivel} en cuanto domines tus primeras palabras y reglas: cuentan como dominadas cuando las aciertas en 2 días distintos. ¡Vuelve mañana a tu repaso!`
+    : `${pre}Estimación pendiente: aún sin palabras activas o reglas dominadas (requieren aciertos en 2 días distintos)`;
   if (p.dias == null && p.hechos >= MIN_EJERCICIOS_PROYECCION) return `${pre}${alumno ? 'Sigue practicando y te diremos' : 'Sin avance reciente para calcular'} cuándo ${alumno ? 'tendrás' : 'tendrá'} el nivel ${p.nivel}.`;
   if (p.dias == null) {
     const n = p.hechos || 0;

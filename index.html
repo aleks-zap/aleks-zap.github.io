@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Bad+Script&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Bad+Script&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -21,6 +21,11 @@
   <nav id="nav"></nav>
 </header>
 <main id="app"><p class="cargando">Cargando…</p></main>
+<script>
+// Si la página no arranca (conexión lenta, actualización a medias), se ofrece recargar en vez de quedar en blanco
+setTimeout(() => { const a = document.getElementById('app'); if (a && a.querySelector('.cargando') && a.textContent.trim() === 'Cargando…')
+  a.innerHTML = '<div class="tarjeta"><p>La plataforma está tardando en abrir. Revisa tu conexión y vuelve a intentar.</p><button class="btn" type="button" onclick="location.reload()">Recargar</button></div>'; }, 12000);
+</script>
 <script type="module" src="app.js"></script>
 <script>if ('serviceWorker' in navigator && !location.search.includes('demo')) navigator.serviceWorker.register('sw.js').catch(() => {});</script>
 </body>

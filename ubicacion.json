@@ -1,0 +1,106 @@
+{
+  "_nota": "Banco de la prueba de ubicación (parte 1). Cada grupo = una o varias lecciones, en orden del curso. Cada pregunta: i = instrucción en español, q = enunciado, o = opciones (la PRIMERA es la correcta; se barajan al mostrar).",
+  "grupos": [
+    { "lecciones": ["E03"], "preguntas": [
+      { "i": "¿Qué significa?", "q": "Привет!", "o": ["¡Hola!", "¡Adiós!", "¡Gracias!"] },
+      { "i": "Completa la frase.", "q": "Меня ___ Анна.", "o": ["зовут", "зовёт", "зову"] },
+      { "i": "Elige la forma correcta del verbo.", "q": "Мы ___ по-русски.", "o": ["говорим", "говорит", "говорю"] },
+      { "i": "Elige la respuesta correcta.", "q": "У тебя есть брат? — Да, ___.", "o": ["у меня есть брат", "у тебя есть брат", "я есть брат"] }
+    ]},
+    { "lecciones": ["E04"], "preguntas": [
+      { "i": "Completa con el país (Эквадор) en la forma correcta.", "q": "Я из ___.", "o": ["Эквадора", "Эквадор", "Эквадоре"] },
+      { "i": "Completa con la forma correcta.", "q": "У меня два ___.", "o": ["брата", "брат", "братьев"] },
+      { "i": "Completa: «Él habla español».", "q": "Он говорит ___.", "o": ["по-испански", "испанский", "испанского"] }
+    ]},
+    { "lecciones": ["E05"], "preguntas": [
+      { "i": "¿Cómo preguntas el precio?", "q": "«¿Cuánto cuesta?»", "o": ["Сколько стоит?", "Как стоит?", "Какой стоит?"] },
+      { "i": "Completa la frase.", "q": "Завтра я ___ работать.", "o": ["буду", "был", "есть"] },
+      { "i": "Elige la palabra interrogativa correcta.", "q": "___ это улица? — Это улица Ленина.", "o": ["Какая", "Какой", "Какое"] }
+    ]},
+    { "lecciones": ["E06"], "preguntas": [
+      { "i": "Completa con книга en la forma correcta.", "q": "Я читаю ___.", "o": ["книгу", "книга", "книге"] },
+      { "i": "Elige el verbo correcto: terminó de leer el libro.", "q": "Вчера я ___ всю книгу.", "o": ["прочитал", "читаю", "прочитаю"] },
+      { "i": "Completa la respuesta.", "q": "Кто он по профессии? — Он ___.", "o": ["врач", "врача", "врачу"] }
+    ]},
+    { "lecciones": ["E07"], "preguntas": [
+      { "i": "Completa la respuesta negativa.", "q": "У тебя есть машина? — Нет, у меня нет ___.", "o": ["машины", "машина", "машину"] },
+      { "i": "Completa la frase.", "q": "___ двадцать лет.", "o": ["Мне", "Я", "Меня"] },
+      { "i": "Completa la respuesta.", "q": "Сколько ей лет? — ___ пять лет.", "o": ["Ей", "Она", "Её"] }
+    ]},
+    { "lecciones": ["E08"], "preguntas": [
+      { "i": "Elige la conjunción correcta.", "q": "Я учу русский, ___ я люблю Россию.", "o": ["потому что", "поэтому", "или"] },
+      { "i": "Completa la frase.", "q": "___ у меня урок.", "o": ["В понедельник", "Понедельник", "На понедельник"] },
+      { "i": "Completa con la forma correcta.", "q": "У меня есть ___ брат.", "o": ["старший", "старшая", "старшее"] }
+    ]},
+    { "lecciones": ["E09"], "preguntas": [
+      { "i": "Completa con спорт en la forma correcta.", "q": "Я занимаюсь ___.", "o": ["спортом", "спорт", "спорта"] },
+      { "i": "Completa con молоко en la forma correcta.", "q": "Я пью кофе с ___.", "o": ["молоком", "молоко", "молока"] },
+      { "i": "Elige la preposición correcta.", "q": "Я играю ___ футбол.", "o": ["в", "на", "с"] }
+    ]},
+    { "lecciones": ["E10"], "preguntas": [
+      { "i": "Elige el verbo correcto: ahora, a pie.", "q": "Сейчас я ___ в парк.", "o": ["иду", "еду", "езжу"] },
+      { "i": "Completa con автобус en la forma correcta.", "q": "Я езжу на работу на ___.", "o": ["автобусе", "автобус", "автобусом"] },
+      { "i": "Elige el verbo correcto.", "q": "Каждый день я ___ в университет на метро.", "o": ["езжу", "еду", "хожу"] }
+    ]},
+    { "lecciones": ["E11"], "preguntas": [
+      { "i": "Completa con музыка en la forma correcta.", "q": "Мы говорим о ___.", "o": ["музыке", "музыку", "музыка"] },
+      { "i": "Completa con el pronombre correcto («en mí»).", "q": "Он думает обо ___.", "o": ["мне", "меня", "я"] },
+      { "i": "Elige el lugar lógico.", "q": "Я сплю в ___.", "o": ["спальне", "кухне", "прихожей"] }
+    ]},
+    { "lecciones": ["E12"], "preguntas": [
+      { "i": "Completa la frase.", "q": "___ дом очень старый.", "o": ["Этот", "Это", "Эта"] },
+      { "i": "Completa la respuesta.", "q": "Кто там? — Там ___ нет.", "o": ["никого", "никто", "ничего"] },
+      { "i": "Completa con стол en la forma correcta.", "q": "Книга лежит на ___.", "o": ["столе", "стол", "стола"] }
+    ]},
+    { "lecciones": ["E13"], "preguntas": [
+      { "i": "Completa con la forma correcta de который.", "q": "Это офис, ___ мне нравится.", "o": ["который", "которая", "которое"] },
+      { "i": "Completa con la forma correcta de который.", "q": "Вот девушка, ___ работает здесь.", "o": ["которая", "который", "которые"] },
+      { "i": "Completa con окно en la forma correcta.", "q": "В офисе много ___.", "o": ["окон", "окна", "окно"] }
+    ]},
+    { "lecciones": ["E14"], "preguntas": [
+      { "i": "Elige la conjunción correcta.", "q": "Я пью кофе, ___ работаю.", "o": ["когда", "который", "чтобы"] },
+      { "i": "Elige la palabra correcta.", "q": "Он ___ говорит по-русски.", "o": ["хорошо", "хороший", "хорошая"] },
+      { "i": "Completa con la forma correcta.", "q": "Наши соседи очень ___.", "o": ["шумные", "шумный", "шумная"] }
+    ]},
+    { "lecciones": ["E15"], "preguntas": [
+      { "i": "Completa la respuesta.", "q": "Куда ты идёшь? — В ___.", "o": ["магазин", "магазине", "магазина"] },
+      { "i": "Completa con работа en la forma correcta.", "q": "Утром я иду на ___.", "o": ["работу", "работе", "работа"] },
+      { "i": "Completa con сахар en la forma correcta.", "q": "Чай без ___, пожалуйста.", "o": ["сахара", "сахар", "сахаром"] }
+    ]},
+    { "lecciones": ["E16", "E17"], "preguntas": [
+      { "i": "Completa con la forma correcta.", "q": "Я возьму ___ воду.", "o": ["минеральную", "минеральная", "минеральной"] },
+      { "i": "En el restaurante: ¿cómo pides la cuenta?", "q": "", "o": ["Счёт, пожалуйста!", "Меню, пожалуйста!", "Сдачи не надо!"] },
+      { "i": "Completa con la forma correcta («rojo»).", "q": "Она носит ___ платье.", "o": ["красное", "красный", "красная"] }
+    ]},
+    { "lecciones": ["E18"], "preguntas": [
+      { "i": "Completa con la forma correcta.", "q": "Анна ___ работать завтра.", "o": ["должна", "должен", "должно"] },
+      { "i": "Completa con la forma correcta.", "q": "Мне ___ новый телефон.", "o": ["нужен", "нужна", "нужно"] },
+      { "i": "Completa con врач en la forma correcta.", "q": "Раньше он был ___.", "o": ["врачом", "врач", "врача"] }
+    ]},
+    { "lecciones": ["E19"], "preguntas": [
+      { "i": "Completa la hora.", "q": "Сейчас три ___.", "o": ["часа", "час", "часов"] },
+      { "i": "Completa la hora.", "q": "Я встаю в семь ___ утра.", "o": ["часов", "часа", "час"] },
+      { "i": "Elige la forma correcta.", "q": "Я иду в магазин ___ хлеб.", "o": ["купить", "куплю", "купил"] }
+    ]},
+    { "lecciones": ["E20"], "preguntas": [
+      { "i": "Completa: «toda la semana».", "q": "Я работал ___.", "o": ["всю неделю", "вся неделя", "всей неделей"] },
+      { "i": "Completa la frase.", "q": "Я хожу в спортзал два раза в ___.", "o": ["неделю", "неделя", "недели"] },
+      { "i": "Completa la frase.", "q": "Мы отдыхаем по ___.", "o": ["выходным", "выходные", "выходных"] }
+    ]},
+    { "lecciones": ["E21"], "preguntas": [
+      { "i": "Completa con врач en la forma correcta.", "q": "Я иду к ___.", "o": ["врачу", "врача", "врачом"] },
+      { "i": "Completa con бабушка en la forma correcta.", "q": "Вечером я поеду к ___.", "o": ["бабушке", "бабушку", "бабушки"] },
+      { "i": "Completa con друг en la forma correcta.", "q": "Он едет к ___ на машине.", "o": ["другу", "друга", "друг"] }
+    ]},
+    { "lecciones": ["E22", "E23"], "preguntas": [
+      { "i": "Completa con май en la forma correcta.", "q": "Мой день рождения в ___.", "o": ["мае", "май", "мая"] },
+      { "i": "Completa la fecha («5 de marzo»).", "q": "Сегодня пятое ___.", "o": ["марта", "март", "марте"] },
+      { "i": "Completa con мама en la forma correcta.", "q": "Я дарю ___ цветы.", "o": ["маме", "маму", "мамы"] }
+    ]},
+    { "lecciones": ["E24", "E25", "E26", "E27", "E28", "E29", "E30"], "preguntas": [
+      { "i": "Completa la postal.", "q": "Вчера мы ___ на море.", "o": ["были", "будем", "есть"] },
+      { "i": "Elige el verbo correcto (mañana, una sola vez).", "q": "Завтра мы ___ в музей.", "o": ["пойдём", "пошли", "ходим"] },
+      { "i": "Completa la queja en el hotel.", "q": "В номере не ___ кондиционер.", "o": ["работает", "работают", "работать"] }
+    ]}
+  ]
+}
