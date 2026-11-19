@@ -26,11 +26,14 @@ const PESO_REGLA = 12;          // una regla nueva "pesa" como 12 palabras nueva
 export const PALABRAS_POR_TARJETA = 12;
 
 export const ALFABETO = [['EJ0003', 'АОКМТ'], ['EJ0007', 'СРУВХЕН'], ['EJ0013', 'БИЛГПДФЗЭ'], ['EJ0018', 'ЖЧЦШЩЮЯЁЙЫЬЪ']];
+export const EJ_REPASO = 'EJ_REPASO', EJ_UBICACION = 'EJ_UBICACION';                        // intentos de los repasos escritos generados con IA
+export const MIN_ESCRITO = 3, MAX_ESCRITO_V = 6, MAX_ESCRITO_G = 2;   // palabras activas vencidas para armar un repaso escrito
 export const ORALES = new Set(['TE01', 'TE15', 'TE17']);   // escuchar y repetir, producción oral, leer en voz alta
 const lista = s => String(s || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
 const DIA = 864e5;
 
-export function prepararModelo({ escenarios, ejercicios, tipos, intentos, eventos = [], reglas = [], temas, formas = { f: {}, m: {} }, vocab = {}, ahora = Date.now(), oralesZoom = false }) {
+export function prepararModelo({ escenarios, ejercicios, tipos, intentos, eventos = [], reglas = [], temas, formas = { f: {}, m: {} }, vocab = {}, ahora = Date.now(), oralesZoom = false, iaActiva = false }) {
+  ejercicios = ejercicios.filter(e => e.id !== EJ_REPASO && e.id !== EJ_UBICACION);   // comodines (repaso escrito, ensayo de ubicación): no son ejercicios del curso
   const tipoHab = Object.fromEntries(tipos.map(t => [t.id, HABILIDAD[lista(t.habilidades_principales)[0]] || 'gramática']));
   const nombreTema = Object.fromEntries((temas || []).map(t => [t.id, t.nombre]));
   const regla = Object.fromEntries(reglas.map(r => [r.id, r]));
@@ -83,18 +86,31 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
   for (const e of ejs) Object.assign(e, focoEjercicio(ctx, e));
   const porId = new Map(ejs.map(e => [e.id, e]));
   // lo que el alumno ya conoce: lo presentado + lo que exigían los ejercicios que ya hizo
-  const conocidos = new Set(eventos.filter(v => v.tipo === 'intro').map(v => v.ref));
+  // prueba de ubicación. Eventos «ubicacion»: lecciones saltadas («E03,E04» | «-» | «no»), «R:G1,G2» reglas posteriores
+  // que el alumno ya usa bien (texto), «A:1» aviso de mala ubicación enviado, «A:cambio»/«A:sigue» respuesta a la sugerencia de nivel
+  const evsUb = eventos.filter(v => v.tipo === 'ubicacion');
+  const evUb = evsUb.filter(v => !/^[RSNA]:/.test(v.ref)).pop();
+  const saltados = new Set(evUb && !['no', '-'].includes(evUb.ref) ? evUb.ref.split(',').filter(Boolean) : []);
+  const reglasR = new Set(evsUb.filter(v => v.ref.startsWith('R:')).flatMap(v => v.ref.slice(2).split(',')).filter(Boolean));
+  const ubicados = new Set();
+  for (const e of ejs) if (saltados.has(e.escenario)) { e.reqReglas.forEach(x => ubicados.add(x)); e.reqV.forEach(x => ubicados.add(x)); (e.ensena || []).forEach(x => ubicados.add(x)); }
+  reglasR.forEach(g => ubicados.add(g));
+  const conocidos = new Set([...eventos.filter(v => v.tipo === 'intro').map(v => v.ref), ...ubicados]);
   for (const id of porEj.keys()) { const e = porId.get(id); if (e) { e.reqReglas.forEach(x => conocidos.add(x)); e.reqV.forEach(x => conocidos.add(x)); (e.ensena || []).forEach(x => conocidos.add(x)); } }
+  // ejercicios saltados: los de las lecciones saltadas y, más adelante, los que solo practican reglas que el alumno ya usa
+  // bien (sin palabras nuevas). Siguen disponibles para el repaso diario.
+  const saltaR = e => !saltados.has(e.escenario) && e.reqG.length > 0 && e.reqG.every(g => reglasR.has(g)) && e.reqV.every(x => conocidos.has(x));
+  const saltadoEj = e => !!e && (saltados.has(e.escenario) || saltaR(e));
   const elegidos = eventos.filter(v => v.tipo === 'escenario').sort((a, b) => new Date(a.creado_en) - new Date(b.creado_en)).map(v => v.ref);
   const esc = escenarios.filter(s => ejs.some(e => e.escenario === s.id)).sort((a, b) => (a.orden ?? 999) - (b.orden ?? 999));
   // ejercicios orales que se hacen en la clase por Zoom (pendientes o ya hechos)
   const zoomPend = new Set(eventos.filter(v => v.tipo === 'zoom').map(v => v.ref));
   const zoomOk = new Set(eventos.filter(v => v.tipo === 'zoom_ok').map(v => v.ref));
   const enZoom = id => zoomPend.has(id) || zoomOk.has(id);
-  const intentado = id => porEj.has(id) || enZoom(id);
+  const intentado = id => porEj.has(id) || enZoom(id) || saltadoEj(porId.get(id));
   const base = new Set(ejs.flatMap(e => e.reqEj));               // ejercicios de los que dependen otros (alfabeto)
   for (const e of ejs) { e.oral = ORALES.has(e.tipo_ejercicio); e.base = base.has(e.id); }
-  const hecho = e => { if (enZoom(e.id)) return true; const h = porEj.get(e.id); return !!h && (h.abierto || (h.ultimoPuntaje ?? 0) >= APROBADO || h.exitos > 0); };
+  const hecho = e => { if (enZoom(e.id) || saltadoEj(e)) return true; const h = porEj.get(e.id); return !!h && (h.abierto || (h.ultimoPuntaje ?? 0) >= APROBADO || h.exitos > 0); };
   const ultimoHab = ordenados.length ? porId.get(ordenados[ordenados.length - 1].ejercicio_id)?.hab : null;
   // bancos: ejercicios con el mismo «grupo» comparten preguntas; «n» = cuántas mostrar
   const grupos = new Map();
@@ -108,8 +124,22 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
   const sorteos = new Map();                                      // última selección de preguntas por ejercicio
   for (const v of eventos) if (v.tipo === 'sorteo') { const [id, sel] = v.ref.split('|'); sorteos.set(id, { sel: sel.split(',').filter(Boolean), t: Date.parse(v.creado_en) }); }
   const m = { ejs, porId, esc, porEj, hecho, grupos, vistos, sorteos, nombreTema, regla, conocidos, elegidos, ultimoHab, totalIntentos: intentos.length, memo,
-    formas, vocab, eventos, intentosOrd: ordenados, ahora, oralesZoom, zoomPend, zoomOk, intentado };
+    formas, vocab, eventos, intentosOrd: ordenados, ahora, oralesZoom, iaActiva, saltados, ubicados, ubicadoEn: evUb ? Date.parse(evUb.creado_en) : null, zoomPend, zoomOk, intentado, reglasR };
   m.mem = memoria(m);
+  // lo ubicado que el alumno usó mal (dominado «de mentira»): sale de lo conocido hasta volver a presentarse
+  // (tarjeta de presentación) y empieza el ciclo completo de repaso
+  const ultIntro = new Map(); for (const v of eventos) if (v.tipo === 'intro') ultIntro.set(v.ref, Date.parse(v.creado_en));
+  m.falsosDominados = [...m.mem].filter(([, s]) => s.falloUb).map(([id]) => id);
+  for (const id of m.falsosDominados) if ((ultIntro.get(id) ?? 0) < m.mem.get(id).falloUb) conocidos.delete(id);
+  m.reglasDudosas = m.falsosDominados.filter(id => /^[GP]/.test(id) && !conocidos.has(id));
+  m.palabrasOlvidadas = m.falsosDominados.filter(id => /^V/.test(id) && !conocidos.has(id));
+  // posible mala ubicación: más de 3 reglas anteriores que resultaron nuevas (tras la prueba, o en un nivel comprado
+  // directamente: reglas de niveles inferiores presentadas desde cero)
+  const nivMinEsc = Math.min(...esc.map(s => nivelIdx(s.nivel)));
+  const inferiores = eventos.filter(v => v.tipo === 'intro' && /^G/.test(v.ref) && regla[v.ref] && nivelIdx(regla[v.ref].nivel || 'A1') < nivMinEsc).map(v => v.ref);
+  m.nuevasAnteriores = [...new Set([...m.falsosDominados.filter(id => /^G/.test(id)), ...inferiores])];
+  m.alertaUbicacion = m.nuevasAnteriores.length > 3 && !evsUb.some(v => v.ref === 'A:1');
+  m.respuestaCambio = evsUb.find(v => /^A:(cambio|sigue)/.test(v.ref))?.ref.slice(2) || null;
   return m;
 }
 
@@ -127,6 +157,7 @@ function idsEnTexto(ctx, texto, permitidos) {
   }
   return out;
 }
+export const palabrasEnTexto = (formas, texto) => [...new Set(idsEnTexto({ formas }, texto, null))];
 const AUTOCORREGIBLE = new Set(['items', 'match', 'order', 'clasificar', 'conjunto', 'descubrir', 'trazo']);
 function contenidoDe(e) { try { return typeof e.contenido === 'string' ? JSON.parse(e.contenido) : (e.contenido || {}); } catch { return {}; } }
 // palabras que un ejercicio hace practicar: focoV (reconocer o producir) y focoP (producir escribiendo)
@@ -152,6 +183,7 @@ function focoEjercicio(ctx, e) {
 // estado de memoria por palabra y regla: { reps, due }
 function memoria(m, hasta = Infinity) {
   const evs = [];
+  if (m.ubicados?.size && m.ubicadoEn) for (const id of m.ubicados) evs.push({ id, t: m.ubicadoEn, ubic: true });
   for (const v of m.eventos) {
     if (v.tipo === 'intro') evs.push({ id: v.ref, t: Date.parse(v.creado_en), intro: true });
     if (v.tipo === 'tarjeta' || v.tipo === 'produccion') { const [id, ok, modo] = v.ref.split('|'); evs.push({ id, t: Date.parse(v.creado_en), ok: ok === '1', prod: modo === 'p' }); }
@@ -163,7 +195,7 @@ function memoria(m, hasta = Infinity) {
     const perm = new Set([...e.reqV, ...(e.ensena || [])]);
     for (const d of i.respuesta?.detalle || []) {
       for (const id of idsEnTexto(m, d.c, perm)) evs.push({ id, t, ok: !!d.ok, prod: !!d.p });
-      for (const id of idsEnTexto(m, d.q, perm)) evs.push({ id, t, ok: !!d.ok, prod: false });
+      for (const id of idsEnTexto(m, d.q, perm)) evs.push({ id, t, ok: !!d.ok, prod: false, enunciado: true });
     }
   }
   evs.sort((a, b) => a.t - b.t);
@@ -172,22 +204,43 @@ function memoria(m, hasta = Infinity) {
     if (ev.t > hasta) break;
     let s = st.get(ev.id);
     if (!s) { s = { reps: 0, due: ev.t + DIA, ult: ev.t, diasOk: new Set(), ultimos: [] }; st.set(ev.id, s); }
+    if (ev.ubic) {   // saltado por la prueba de ubicación: se asume dominado y no entra al repaso mientras no falle
+      if (s.reps === 0) { s.ubic = true; s.dominadaUb = true; s.reps = INTERVALOS_DIAS.length; s.due = Infinity; }
+      continue;
+    }
     if (ev.intro) continue;
+    if (s.ubic) {    // los aciertos no cambian nada; el primer error (no el de una palabra que solo aparece en el enunciado) lo destapa
+      if (ev.ok || ev.enunciado) continue;
+      s.ubic = false; s.dominadaUb = false; s.falloUb = ev.t; s.reps = 0; s.due = ev.t + DIA; s.ult = ev.t;
+      s.ultimos.push(false); continue;
+    }
     const activa = m.vocab[ev.id]?.uso === 'activo';
     if (activa && !ev.prod && ev.ok) continue;                  // reconocer una palabra activa no basta
+    const eraDominada = dominada(s);
     // historial para medir dominio (independiente del calendario): días con acierto y últimos 5 resultados
     if (ev.ok) s.diasOk.add(Math.floor(ev.t / DIA));
     s.ultimos.push(!!ev.ok); if (s.ultimos.length > 5) s.ultimos.shift();
-    if (!ev.ok) { s.reps = 0; s.due = ev.t + DIA; }
-    else if (s.reps === 0 || ev.t >= s.due) { s.reps++; s.due = ev.t + INTERVALOS_DIAS[Math.min(s.reps - 1, INTERVALOS_DIAS.length - 1)] * DIA; }
+    if (!ev.ok && eraDominada) {   // ya dominada de verdad: retrocede un paso en el ciclo (tras completar el de 60 días, vuelve en 60; en el de 60, vuelve en 21…)
+      s.reps = Math.max(1, s.reps - 1); s.due = ev.t + INTERVALOS_DIAS[Math.min(s.reps - 1, INTERVALOS_DIAS.length - 1)] * DIA; s.avance = ev.t;
+    }
+    else if (!ev.ok) { s.reps = 0; s.due = ev.t + DIA; }
+    else if (s.reps === 0 || ev.t >= s.due) { s.reps++; s.due = ev.t + INTERVALOS_DIAS[Math.min(s.reps - 1, INTERVALOS_DIAS.length - 1)] * DIA; s.avance = ev.t; }
+    else if (ev.prod && fechaLocal(ev.t) !== fechaLocal(s.avance ?? 0)) {   // como máximo un avance por día
+      // producción correcta antes de tiempo (p. ej. en una tarea escrita): aprueba el repaso que tocaba y
+      // el siguiente se programa a la diferencia entre intervalos (paso de 7 días aprobado hoy → el de 21, en 14 días)
+      const ant = INTERVALOS_DIAS[Math.min(s.reps - 1, INTERVALOS_DIAS.length - 1)];
+      s.reps++;
+      const sig = INTERVALOS_DIAS[Math.min(s.reps - 1, INTERVALOS_DIAS.length - 1)];
+      s.due = ev.t + Math.max(sig - ant, ant) * DIA; s.avance = ev.t;
+    }
     s.ult = ev.t;
   }
   return st;
 }
 // dominio robusto: aciertos en al menos 2 días distintos y ≥ 80 % de aciertos en los últimos intentos
 const tasa = s => s.ultimos.length ? s.ultimos.filter(Boolean).length / s.ultimos.length : 0;
-export const dominada = s => !!s && s.diasOk.size >= 2 && tasa(s) >= 0.8;
-export const reconocida = s => !!s && s.diasOk.size >= 1 && tasa(s) >= 0.6;
+export const dominada = s => !!s && (s.dominadaUb || (s.diasOk.size >= 2 && tasa(s) >= 0.8));
+export const reconocida = s => !!s && (s.dominadaUb || s.ubic || (s.diasOk.size >= 1 && tasa(s) >= 0.6));
 export function resumenPalabras(m, mem = m.mem) {
   let activas = 0, reconocidas = 0;
   for (const [id, s] of mem) {
@@ -237,8 +290,15 @@ export function planRepaso(m) {
     if (!mejor || mg.length < 2) break;
     ejercicios.push(mejor.id); mg.forEach(id => pend.delete(id));
   }
-  const tarjetas = [...pend].filter(id => /^V/.test(id) && m.vocab[id]);
-  return { ejercicios, tarjetas };
+  let tarjetas = [...pend].filter(id => /^V/.test(id) && m.vocab[id]);
+  // repaso escrito con IA: las palabras activas que quedan se practican en una tarea de escritura (si la IA está activa)
+  let escrito = [];
+  const activas = tarjetas.filter(id => m.vocab[id]?.uso === 'activo');
+  if (m.iaActiva && activas.length >= MIN_ESCRITO) {
+    escrito = [...activas.slice(0, MAX_ESCRITO_V), ...[...pend].filter(id => /^G/.test(id)).slice(0, MAX_ESCRITO_G)];
+    tarjetas = tarjetas.filter(id => !escrito.includes(id));
+  }
+  return { ejercicios, tarjetas, escrito };
 }
 
 // ---------- estado ----------
@@ -381,22 +441,31 @@ function conPresentacion(m, e, tipo) {
 //  { tipo:'fin' }
 export function siguienteTarea(m) {
   const est = estadoAlumno(m);
+  // prueba de ubicación: lo saltado que el alumno usó mal se vuelve a presentar antes de todo (y empieza su ciclo de repaso)
+  if (m.reglasDudosas?.length) { const g = m.reglasDudosas[0]; return { tipo: 'reglaUbicada', regla: m.regla[g] || { id: g, nombre: g }, pendientes: m.reglasDudosas.length }; }
+  if (m.palabrasOlvidadas?.length) return { tipo: 'palabras', ids: m.palabrasOlvidadas.slice(0, PALABRAS_POR_TARJETA), pendientes: m.palabrasOlvidadas.length, ejercicio: null, despues: 'olvido' };
   // 1) el día empieza con el repaso que toca según el calendario
   const hoy = fechaLocal(m.ahora);
   const planesHoy = m.eventos.filter(v => v.tipo === 'repaso' && v.ref.startsWith(hoy + '|'));
   const plan = planesHoy[planesHoy.length - 1];
   if (!plan) {
     const p = planRepaso(m);
-    if (p && (p.ejercicios.length || p.tarjetas.length)) return { tipo: 'planificar', ref: `${hoy}|${p.ejercicios.join(',')}|${p.tarjetas.join(',')}` };
+    if (p && (p.ejercicios.length || p.tarjetas.length || p.escrito.length)) return { tipo: 'planificar', ref: `${hoy}|${p.ejercicios.join(',')}|${p.tarjetas.join(',')}|${(p.escrito || []).join(',')}` };
   } else {
-    const [, ej = '', tj = ''] = plan.ref.split('|'), t0 = Date.parse(plan.creado_en);
-    const ejs = ej.split(',').filter(Boolean), tjs = tj.split(',').filter(Boolean);
+    const [, ej = '', tj = '', es = ''] = plan.ref.split('|'), t0 = Date.parse(plan.creado_en);
+    const ejs = ej.split(',').filter(Boolean); let tjs = tj.split(',').filter(Boolean);
+    let ess = es.split(',').filter(Boolean);
+    // si la IA se apagó o no pudo generar la tarea, sus palabras vuelven a las tarjetas
+    const gen = m.eventos.filter(v => v.tipo === 'escrito' && Date.parse(v.creado_en) >= t0).pop();
+    if (ess.length && (!m.iaActiva || /"fallo"/.test(gen?.ref || ''))) { tjs = [...tjs, ...ess.filter(id => /^V/.test(id))]; ess = []; }
     const pendEj = ejs.filter(id => !m.intentosOrd.some(i => i.ejercicio_id === id && Date.parse(i.creado_en) >= t0));
     if (pendEj.length) {
       const e0 = m.porId.get(pendEj[0]);
       if (e0?.nMostrar && !seleccionActiva(m, e0)) { const r = conPresentacion(m, e0, 'repasoDia'); if (r.tipo === 'sortear') return r; }
-      return { tipo: 'repasoDia', ejercicio: e0, k: ejs.length - pendEj.length + 1, n: ejs.length + (tjs.length ? 1 : 0) };
+      return { tipo: 'repasoDia', ejercicio: e0, k: ejs.length - pendEj.length + 1, n: ejs.length + (tjs.length ? 1 : 0) + (ess.length ? 1 : 0) };
     }
+    if (ess.length && !m.intentosOrd.some(i => i.ejercicio_id === EJ_REPASO && Date.parse(i.creado_en) >= t0))
+      return { tipo: 'repasoEscrito', ids: ess, generado: gen && !/"fallo"/.test(gen.ref) ? gen.ref.slice(gen.ref.indexOf('|') + 1) : null };
     const pendT = tjs.filter(id => !m.eventos.some(v => v.tipo === 'tarjeta' && v.ref.startsWith(id + '|') && Date.parse(v.creado_en) >= t0));
     if (pendT.length) return { tipo: 'tarjetas', items: pendT.map(id => ({ id, modo: m.vocab[id]?.uso === 'activo' ? 'p' : 'r' })) };
     // ronda terminada: si sigue habiendo mucho atraso, otra ronda de repaso antes de lo nuevo
@@ -404,7 +473,7 @@ export function siguienteTarea(m) {
     if (pendiente > UMBRAL_ATRASO) {
       if (planesHoy.length < MAX_RONDAS_DIA) {
         const p = planRepaso(m);
-        if (p && (p.ejercicios.length || p.tarjetas.length)) return { tipo: 'planificar', ref: `${hoy}|${p.ejercicios.join(',')}|${p.tarjetas.join(',')}` };
+        if (p && (p.ejercicios.length || p.tarjetas.length || p.escrito.length)) return { tipo: 'planificar', ref: `${hoy}|${p.ejercicios.join(',')}|${p.tarjetas.join(',')}|${(p.escrito || []).join(',')}` };
       }
       const ini = new Date(m.ahora); ini.setHours(0, 0, 0, 0);
       const vistos = new Set(), nuevosHoy = new Set();
