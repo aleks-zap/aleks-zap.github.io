@@ -38,6 +38,13 @@ async function crearSupabase() {
     async registro(nombre, email, password) { return ok(await sb.auth.signUp({ email, password, options: { data: { nombre }, emailRedirectTo: location.origin + location.pathname } })); },
     async recuperar(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname + '#/nueva-clave' })); },
     async nuevaClave(password) { ok(await sb.auth.updateUser({ password })); },
+    async cambiarNombre(nombre) { ok(await sb.rpc('cambiar_mi_nombre', { p_nombre: nombre })); },
+    async cambiarCorreo(email) { ok(await sb.auth.updateUser({ email }, { emailRedirectTo: location.origin + location.pathname })); },
+    async cambiarClave(actual, nueva) {      // se confirma la contraseña actual antes de cambiarla
+      const r = await sb.auth.signInWithPassword({ email: sesion.user.email, password: actual });
+      if (r.error) throw new Error('La contraseña actual no es correcta.');
+      ok(await sb.auth.updateUser({ password: nueva }));
+    },
     async reportar(o) { ok(await sb.from('reportes').insert(o)); },
     async reportes() { return ok(await sb.from('reportes').select('*').order('creado_en', { ascending: false }).limit(200)); },
     async resolverReporte(id) { ok(await sb.from('reportes').update({ estado: 'resuelto' }).eq('id', id)); },
@@ -139,7 +146,7 @@ async function crearDemo() {
   return {
     async sesion() { return new URLSearchParams(location.search).get('demo') === 'publico' ? null : { user: { id: 'demo', email: 'demo@demo' } }; },
     async login() {}, async logout() {},
-    async registro() { return { session: null }; }, async recuperar() {}, async nuevaClave() {},
+    async registro() { return { session: null }; }, async recuperar() {}, async nuevaClave() {}, async cambiarNombre() {}, async cambiarCorreo() {}, async cambiarClave(a) { if (a !== 'demo1234') throw new Error('La contraseña actual no es correcta.'); },
     async reportar(o) { console.log('reporte', o); }, async reportes() { return []; }, async resolverReporte() {},
     async evaluarPronunciacion() { return { total: 82, exactitud: 85, fluidez: 78, completitud: 100, palabras: [{ palabra: 'привет', nota: 92, error: 'None' }, { palabra: 'меня', nota: 64, error: 'Mispronunciation' }, { palabra: 'зовут', nota: 88, error: 'None' }] }; },
     async generarRepaso(d0) { return { enunciado: 'Responde las preguntas con frases completas.', items: [{ pregunta: 'Какой у тебя дом?', palabras: d0.palabras.slice(0, 2).map(p => p.lema), reglas: d0.reglas.map(g => g.nombre) }, { pregunta: 'Ты работаешь?', palabras: d0.palabras.slice(2).map(p => p.lema) }] }; },
@@ -549,7 +556,7 @@ function nav(activa) {
   const links = [['#/', perfil?.rol === 'docente' ? 'Lecciones' : 'Inicio', 'inicio']];
   if (perfil?.rol === 'docente') links.push(['#/docente', 'Panel docente', 'docente']);
   $nav.innerHTML = links.map(([u, t, k]) => `<a href="${u}" class="${k === activa ? 'activo' : ''}">${t}</a>`).join('') +
-    `<span class="chip">${esc(perfil?.nombre || sesion.user.email)}</span>` + (DEMO ? '<span class="chip pend">demo</span>' : '<a href="#/salir">Salir</a>');
+    `<a class="chip" href="#/cuenta" title="Mi cuenta">👤 ${esc(perfil?.nombre || sesion.user.email)}</a>` + (DEMO ? '<span class="chip pend">demo</span>' : '<a href="#/salir">Salir</a>');
 }
 
 function vLogin(msg = '') {
@@ -1914,6 +1921,49 @@ function tarjetaFinPrueba() {
     <div class="acciones"><a class="btn" href="#/planes">Ver planes</a></div></div>`);
 }
 
+// ================================================================ mi cuenta: nombre, correo, contraseña
+const NOMBRE_PLAN = { prueba: 'Prueba gratis', plataforma: 'Esencial', pro: 'Pro', nivel: 'Un nivel', completo: 'Acceso completo', zoom_grupal: 'Plataforma + Zoom grupal', zoom_individual: 'Plataforma + Zoom individual' };
+function vCuenta() {
+  nav('cuenta');
+  const p = perfil || {};
+  const plan = `${NOMBRE_PLAN[p.plan] || p.plan || '—'}${p.plan === 'nivel' && p.plan_nivel ? ' ' + p.plan_nivel : ''}${p.plan_hasta && !['nivel', 'completo'].includes(p.plan) ? ` · hasta el ${new Date(p.plan_hasta + 'T12:00:00').toLocaleDateString('es')}` : ''}`;
+  $app.innerHTML = `<div class="migas"><a href="#/">← Inicio</a></div><h1>Mi cuenta</h1>
+    <div class="tarjeta"><p><b>Correo:</b> ${esc(sesion.user.email)}<br><b>Plan:</b> ${esc(plan)}</p>${p.plan === 'prueba' ? '<a class="btn sec" href="#/planes">Ver planes</a>' : ''}</div>`;
+  const forma = (titulo, campos, boton, accion) => {
+    const f = h(`<form class="tarjeta"><h2 style="margin-top:0">${titulo}</h2>${campos}<p class="error"></p><p class="ok-msg"></p><button class="btn" type="submit">${boton}</button></form>`);
+    f.onsubmit = async e => {
+      e.preventDefault(); const b = f.querySelector('button'), er = f.querySelector('.error'), ok = f.querySelector('.ok-msg');
+      er.textContent = ok.textContent = ''; b.disabled = true;
+      try { ok.textContent = await accion(f); } catch (err) { er.textContent = err.message || 'No se pudo guardar.'; }
+      b.disabled = false;
+    };
+    $app.append(f);
+  };
+  forma('Nombre', `<div class="campo"><label>Tu nombre (aparece en la plataforma y, si rindes el examen, en el certificado)</label><input type="text" required maxlength="80" value="${esc(p.nombre || '')}" autocomplete="name"></div>`, 'Guardar nombre', async f => {
+    const n = f.querySelector('input').value.trim(); await api.cambiarNombre(n); perfil.nombre = n; nav('cuenta'); return '✓ Nombre guardado.';
+  });
+  forma('Correo', `<div class="campo"><label>Correo nuevo</label><input type="email" required autocomplete="email"></div><p class="sub">Te enviaremos un enlace de confirmación. El cambio rige cuando lo abras (si se te pide, confirma también desde tu correo actual).</p>`, 'Cambiar correo', async f => {
+    const em = f.querySelector('input').value.trim();
+    if (em.toLowerCase() === sesion.user.email.toLowerCase()) throw new Error('Ese ya es tu correo.');
+    await api.cambiarCorreo(em); f.reset(); return `✓ Revisa ${em} y abre el enlace para confirmar el cambio.`;
+  });
+  forma('Contraseña', `<div class="campo"><label>Contraseña actual</label><input type="password" required autocomplete="current-password"></div><div class="campo"><label>Contraseña nueva (mínimo 8 caracteres)</label><input type="password" required minlength="8" autocomplete="new-password"></div><div class="campo"><label>Repite la contraseña nueva</label><input type="password" required minlength="8" autocomplete="new-password"></div>`, 'Cambiar contraseña', async f => {
+    const [a, n1, n2] = [...f.querySelectorAll('input')].map(i => i.value);
+    if (n1 !== n2) throw new Error('Las contraseñas nuevas no coinciden.');
+    if (n1 === a) throw new Error('La contraseña nueva debe ser distinta de la actual.');
+    await api.cambiarClave(a, n1); f.reset(); return '✓ Contraseña cambiada.';
+  });
+  const borrar = h(`<div class="tarjeta"><h2 style="margin-top:0">Borrar mi cuenta</h2><p class="sub">Se borran tu cuenta y tu progreso en un máximo de 15 días; te confirmamos por correo. Las facturas se conservan por obligación legal.</p><button class="btn sec" type="button">Pedir que borren mi cuenta</button><p class="ok-msg"></p></div>`);
+  let paso = 0; const bB = borrar.querySelector('button');
+  bB.onclick = async () => {
+    if (!paso) { paso = 1; bB.textContent = 'Sí, quiero borrar mi cuenta'; bB.classList.add('rojo'); return; }
+    bB.disabled = true;
+    try { await api.reportar({ texto: `🗑 Pide borrar su cuenta (${sesion.user.email}).`, pagina: '#/cuenta', navegador: 'solicitud del alumno' }); borrar.querySelector('.ok-msg').textContent = '✓ Solicitud enviada. Te escribiremos para confirmar.'; }
+    catch { borrar.querySelector('.ok-msg').textContent = 'No se pudo enviar. Usa «Reportar un problema técnico».'; bB.disabled = false; }
+  };
+  $app.append(borrar);
+}
+
 // ================================================================ reportar un problema técnico
 function botonReporte() {
   if (document.getElementById('reportar')) return;
@@ -2288,6 +2338,7 @@ async function router() {
     if (r === 'planes') return vPublico();
     if (r === 'examen') return await vExamen();
     if (r === 'ubicacion') return await vUbicacion();
+    if (r === 'cuenta') return vCuenta();
     if (r === 'certificado' && p) return await vCertificado(p);
     if (['entrar', 'registro', 'recuperar'].includes(r)) { location.hash = '#/'; return; }
     if (r === 'salir') { await api.logout(); sesion = null; perfil = null; document.getElementById('reportar')?.remove(); location.hash = '#/'; return vPublico(); }
