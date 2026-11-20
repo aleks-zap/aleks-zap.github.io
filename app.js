@@ -55,6 +55,23 @@ async function crearSupabase() {
     async generarRepaso(datos) { const r = await sb.functions.invoke('corregir', { body: { accion: 'generar', ...datos } }); if (r.error) throw r.error; if (!r.data?.items) throw new Error(r.data?.omitido || r.data?.error || 'sin tarea'); return r.data; },
     async evaluarPronunciacion(audio, texto) { const r = await sb.functions.invoke('pronunciacion', { body: { audio, texto } }); if (r.error) throw r.error; return r.data; },
     async corregirIA(intento_id) { const r = await sb.functions.invoke('corregir', { body: { intento_id } }); if (r.error) throw r.error; return r.data; },
+    async funcionClase(body) {
+      const r = await sb.functions.invoke('clase', { body });
+      if (r.error) { let m = r.error.message; try { m = (await r.error.context.json()).error || m; } catch {} throw new Error(m); }
+      if (r.data?.omitido) throw new Error(r.data.omitido);
+      return r.data;
+    },
+    // la grabación va directo del navegador a ElevenLabs (no pasa por Supabase); el permiso dura 15 min y sirve una vez
+    async transcribirClase(file, conEspanol = true) {
+      const { token } = await this.funcionClase({ accion: 'token' });
+      const fd = new FormData();
+      fd.append('file', file); fd.append('model_id', 'scribe_v3'); fd.append('diarize', 'true'); fd.append('num_speakers', '2'); fd.append('tag_audio_events', 'false');
+      if (conEspanol) { fd.append('language_code', 'rus'); fd.append('secondary_language_codes', 'spa'); }
+      const r = await fetch(`https://api.elevenlabs.io/v1/speech-to-text?token=${encodeURIComponent(token)}`, { method: 'POST', body: fd });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) { const e = new Error(out?.detail?.message || (typeof out?.detail === 'string' ? out.detail : '') || `ElevenLabs respondió ${r.status}`); e.status = r.status; throw e; }
+      return out;
+    },
     async examenes(todos = false) { let q = sb.from('examenes').select('*').order('iniciado_en', { ascending: false }); if (!todos) q = q.eq('usuario', sesion.user.id); return ok(await q); },
     async crearExamen(o) { return ok(await sb.from('examenes').insert(o).select().single()); },
     async actualizarExamen(id, o) { ok(await sb.from('examenes').update(o).eq('id', id)); },
@@ -151,7 +168,11 @@ async function crearDemo() {
     async evaluarPronunciacion() { return { total: 82, exactitud: 85, fluidez: 78, completitud: 100, palabras: [{ palabra: 'привет', nota: 92, error: 'None' }, { palabra: 'меня', nota: 64, error: 'Mispronunciation' }, { palabra: 'зовут', nota: 88, error: 'None' }] }; },
     async generarRepaso(d0) { return { enunciado: 'Responde las preguntas con frases completas.', items: [{ pregunta: 'Какой у тебя дом?', palabras: d0.palabras.slice(0, 2).map(p => p.lema), reglas: d0.reglas.map(g => g.nombre) }, { pregunta: 'Ты работаешь?', palabras: d0.palabras.slice(2).map(p => p.lema) }] }; },
     async ajustes() { return [{ clave: 'ia_activa', valor: new URLSearchParams(location.search).has('ia') }, { clave: 'pronunciacion_activa', valor: new URLSearchParams(location.search).has('pron') }, { clave: 'ia_tope_mensual_usd', valor: 5 }]; },
-    async espacio() { return [{ tipo: 'base', nombre: 'base de datos', bytes: 61e6 }, { tipo: 'archivos', nombre: 'materiales', bytes: 640e6, archivos: 352 }, { tipo: 'archivos', nombre: 'grabaciones', bytes: 95e6, archivos: 40 }, { tipo: 'archivos', nombre: 'examenes', bytes: 110e6, archivos: 300 }]; }, async guardarAjuste() {}, async usoIA() { return []; }, async corregirIA() { const u = intentos[intentos.length - 1]; return { puntaje: 100, feedback: '¡Muy bien! Sin errores.', errores: [], objetivos: (u?.respuesta?.objetivos || []).slice(0, 3).map(o => ({ id: o.id, ok: true })) }; },
+    async espacio() { return [{ tipo: 'base', nombre: 'base de datos', bytes: 61e6 }, { tipo: 'archivos', nombre: 'materiales', bytes: 640e6, archivos: 352 }, { tipo: 'archivos', nombre: 'grabaciones', bytes: 95e6, archivos: 40 }, { tipo: 'archivos', nombre: 'examenes', bytes: 110e6, archivos: 300 }]; }, async guardarAjuste() {}, async usoIA() { return []; }, async funcionClase(b) { await new Promise(r => setTimeout(r, 400)); if (b.accion === 'analizar') return { reglas: (b.reglas || []).slice(0, 3).map((g, i) => ({ id: g.id, ok: i !== 1 })), errores: [{ original: 'я живу в Куэнка', correccion: 'я живу в Куэнке', explicacion: 'prepositivo tras в' }] }; return {}; },
+    async transcribirClase() { await new Promise(r => setTimeout(r, 800)); const fr = (sp, t) => t.split(' ').flatMap((w, i) => [...(i ? [{ text: ' ', type: 'spacing', speaker_id: sp }] : []), { text: w, type: 'word', speaker_id: sp }]);
+      const ws = [['speaker_0', 'Привет! Как дела? Расскажи, что ты делал в выходные?'], ['speaker_1', 'Привет! Хорошо. В субботу я был дома, я читал книгу.'], ['speaker_0', 'Очень хорошо. А где ты живёшь?'], ['speaker_1', 'Я живу в Куэнка. Мой дом большой, есть кухня и две комнаты.'], ['speaker_0', 'Отлично. Bueno, ahora vamos a practicar.'], ['speaker_1', 'Sí. Я люблю пить кофе утром.']].flatMap(([s, t], i) => [...(i ? [{ text: '\n', type: 'spacing', speaker_id: s }] : []), ...fr(s, t)]);
+      return { audio_duration_secs: 1800, words: ws }; },
+    async corregirIA() { const u = intentos[intentos.length - 1]; return { puntaje: 100, feedback: '¡Muy bien! Sin errores.', errores: [], objetivos: (u?.respuesta?.objetivos || []).slice(0, 3).map(o => ({ id: o.id, ok: true })) }; },
     async examenes() { return JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); },
     async crearExamen(o) { const l = JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); const x = { id: Date.now(), estado: 'en_curso', incidencias: [], iniciado_en: new Date().toISOString(), ...o }; l.unshift(x); sessionStorage.setItem('demo_examenes', JSON.stringify(l)); return x; },
     async actualizarExamen(id, o) { const l = JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); const x = l.find(e => e.id === id); Object.assign(x, o); sessionStorage.setItem('demo_examenes', JSON.stringify(l)); },
@@ -1444,6 +1465,7 @@ async function tAlumno(el, uid) {
     el.append(tg);
   }
 
+  el.append(bloqueClase(uid, m));
   el.append(bloqueProduccion(uid));
 
   // errores frecuentes
@@ -1461,6 +1483,93 @@ async function tAlumno(el, uid) {
   const t = h(`<table><tr><th>Fecha</th><th>Ejercicio</th><th>Resultado</th></tr></table>`);
   ints.slice(0, 40).forEach(i => t.append(h(`<tr><td>${new Date(i.creado_en).toLocaleString()}</td><td><a href="#/x/${i.ejercicio_id}">${i.ejercicio_id}</a></td><td>${i.puntaje != null ? Math.round(i.puntaje) + ' %' : ''} <span class="chip">${esc(i.estado)}</span></td></tr>`)));
   el.append(t);
+}
+
+// Clase grabada (Meet): transcripción con ElevenLabs Scribe v3 → elegir al alumno → análisis con Haiku → vista previa → registro
+function turnosDe(words) {
+  const t = [];
+  for (const w of words || []) {
+    if (w.type === 'audio_event') continue;
+    const sp = w.speaker_id || '?';
+    if (!t.length || t[t.length - 1].sp !== sp) { if (w.type === 'spacing') continue; t.push({ sp, texto: '' }); }
+    t[t.length - 1].texto += w.text;
+  }
+  return t.map(x => ({ ...x, texto: x.texto.replace(/\s+/g, ' ').trim() })).filter(x => x.texto);
+}
+function bloqueClase(uid, m) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const b = h(`<div class="tarjeta"><b>Clase grabada (Meet) → producción del alumno</b>
+    <p class="sub" style="margin:6px 0">Elige la grabación (video o audio, hasta 5 GB). Se envía directo a ElevenLabs para transcribirla (~USD 0,20 por hora); no se guarda en la plataforma. Luego eliges quién es el alumno, revisas el resultado y lo registras. Requiere consentimiento para grabar.</p>
+    <div class="acciones"><input type="file" accept="video/*,audio/*"><input type="date" value="${hoy}"><button class="btn" type="button">Transcribir</button></div>
+    <p class="estado sub"></p><div class="paso"></div></div>`);
+  const [inF, inD] = b.querySelectorAll('input'), bT = b.querySelector('button'), est = b.querySelector('.estado'), paso = b.querySelector('.paso');
+  let transcripcion = null;
+  bT.onclick = async () => {
+    const f = inF.files[0]; if (!f) { est.textContent = 'Elige primero la grabación.'; return; }
+    bT.disabled = true; paso.innerHTML = '';
+    est.textContent = `Enviando y transcribiendo (${Math.round(f.size / 1e6)} MB)… una hora de clase puede tardar unos minutos; no cierres la página. ⏳`;
+    try {
+      try { transcripcion = await api.transcribirClase(f, true); }
+      catch (e) { if (e.status >= 400 && e.status < 500) { est.textContent = 'Reintentando con detección automática de idioma… ⏳'; transcripcion = await api.transcribirClase(f, false); } else throw e; }
+      const turnos = turnosDe(transcripcion.words);
+      if (!turnos.length) throw new Error('La transcripción salió vacía.');
+      est.textContent = `✓ Transcrita: ${Math.round((transcripcion.audio_duration_secs || 0) / 60)} min, ${turnos.length} intervenciones.`;
+      elegirAlumno(turnos);
+    } catch (e) { est.textContent = '✗ ' + (e.message || 'No se pudo transcribir.'); }
+    bT.disabled = false;
+  };
+  function elegirAlumno(turnos) {
+    const hablantes = [...new Set(turnos.map(t => t.sp))];
+    const muestras = sp => turnos.filter(t => t.sp === sp && t.texto.split(' ').length >= 4).slice(0, 3);
+    paso.innerHTML = '<p class="instr" style="margin-top:12px">¿Quién es el alumno?</p>';
+    for (const sp of hablantes) {
+      const n = turnos.filter(t => t.sp === sp).length;
+      const c = h(`<label class="regla" style="display:block;cursor:pointer"><input type="radio" name="hab" value="${esc(sp)}"> <b style="display:inline">Hablante ${esc(sp.replace(/\D/g, '')) || esc(sp)}</b> · ${n} intervenciones${muestras(sp).map(t => `<div class="texto-ru" style="font-size:15px;margin-top:6px">${esc(t.texto.slice(0, 220))}</div>`).join('')}</label>`);
+      paso.append(c);
+    }
+    const acc = h(`<div class="acciones"><button class="btn" type="button">Analizar lo que dijo el alumno</button><button class="btn sec" type="button">Descargar transcripción (.txt)</button></div>`);
+    const [bA, bD] = acc.querySelectorAll('button');
+    bD.onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([turnos.map(t => `[${t.sp}] ${t.texto}`).join('\n\n')], { type: 'text/plain' })); a.download = `clase-${inD.value}.txt`; a.click(); };
+    bA.onclick = async () => {
+      const sp = paso.querySelector('input[name=hab]:checked')?.value; if (!sp) { est.textContent = 'Marca quién es el alumno.'; return; }
+      bA.disabled = true; est.textContent = 'Analizando con IA… ⏳';
+      const texto = turnos.filter(t => t.sp === sp).map(t => t.texto).join('\n');
+      try {
+        const reglas = [...m.conocidos].filter(id => /^G/.test(id) && m.regla[id]).map(id => ({ id, nombre: m.regla[id].nombre }));
+        const r = await api.funcionClase({ accion: 'analizar', texto, reglas, segundos: transcripcion.audio_duration_secs || 0 });
+        await vistaPrevia(texto, r);
+      } catch (e) { est.textContent = '✗ ' + (e.message || 'No se pudo analizar.'); }
+      bA.disabled = false;
+    };
+    paso.append(acc);
+  }
+  async function vistaPrevia(texto, r) {
+    const formas = formasCache || await fetch('formas.json').then(x => x.json());
+    const voc = vocabCache ? Object.fromEntries(vocabCache.map(v => [v.id, v])) : {};
+    // con error = solo las palabras del fragmento que cambian en la corrección (no todo el fragmento)
+    const tok = x => String(x || '').toLowerCase().replace(/ё/g, 'е').match(/[а-яё-]+/g) || [];
+    const cambiadas = (r.errores || []).flatMap(e => { const ok = new Set(tok(e.correccion)); return tok(e.original).filter(w => !ok.has(w)); });
+    const mal = new Set(palabrasEnTexto(formas, cambiadas.join(' ')));
+    const pals = palabrasEnTexto(formas, texto).filter(id => voc[id]);
+    const filas = [...pals.map(id => ({ id, nombre: voc[id].lema, det: voc[id].traduccion || '', ok: !mal.has(id) })),
+      ...(r.reglas || []).map(g => ({ id: g.id, nombre: m.regla[g.id]?.nombre || g.id, det: 'regla', ok: g.ok }))];
+    est.textContent = `Revisa y registra: ${pals.length} palabras del curso y ${(r.reglas || []).length} reglas.`;
+    const t = h(`<div style="margin-top:12px">${(r.errores || []).length ? `<p class="instr">Errores que detectó la IA</p><ul>${r.errores.map(e => `<li><span class="error">${esc(e.original)}</span> → <span class="exito">${esc(e.correccion)}</span>${e.explicacion ? ` <span class="sub">(${esc(e.explicacion)})</span>` : ''}</li>`).join('')}</ul>` : '<p class="sub">La IA no detectó errores claros.</p>'}
+      <p class="instr">Producción a registrar</p><p class="sub">Desmarca lo que no quieras registrar (por ejemplo, una palabra que dijiste tú y quedó asignada al alumno) y corrige «bien / con error» si hace falta.</p>
+      <table><tr><th></th><th>Palabra o regla</th><th></th><th>Resultado</th></tr>${filas.map((f, i) => `<tr><td><input type="checkbox" checked data-i="${i}"></td><td><b>${esc(f.nombre)}</b></td><td class="sub">${esc(f.det)}</td><td><select data-i="${i}"><option value="1" ${f.ok ? 'selected' : ''}>bien</option><option value="0" ${f.ok ? '' : 'selected'}>con error</option></select></td></tr>`).join('')}</table>
+      <div class="acciones"><button class="btn" type="button">Registrar producción del ${esc(inD.value)}</button><span class="ok-msg"></span></div></div>`);
+    t.querySelector('.acciones .btn').onclick = async ev => {
+      const refs = filas.map((f, i) => t.querySelector(`input[data-i="${i}"]`).checked ? `${f.id}|${t.querySelector(`select[data-i="${i}"]`).value}|p` : null).filter(Boolean);
+      if (!refs.length) return;
+      ev.target.disabled = true;
+      try {
+        await api.registrarPara(uid, 'produccion', refs, new Date(inD.value + 'T12:00:00').toISOString());
+        t.querySelector('.ok-msg').textContent = `✓ Registrado: ${refs.filter(x => x.includes('|1|')).length} bien, ${refs.filter(x => x.includes('|0|')).length} con error. Cuentan para su repaso.`;
+      } catch (e) { t.querySelector('.ok-msg').textContent = '✗ ' + e.message; ev.target.disabled = false; }
+    };
+    paso.querySelector('.vista')?.remove(); t.classList.add('vista'); paso.append(t);
+  }
+  return b;
 }
 
 // Producción revisada por el docente (ensayos, clases de conversación): lista de IDs V…/G…
