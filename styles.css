@@ -196,3 +196,7 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .item.nose-on input { opacity: .5; }
 .btn.nose { padding: 6px 10px; font-size: 13px; white-space: nowrap; }
 @media (prefers-color-scheme: dark) { .aviso-prueba { background: #3a2f17; border-color: #8a6a2a; } }
+.buscador-prod { position: relative; margin: 6px 0 8px; }
+.buscador-prod input { width: 100%; }
+.fila-sug { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--linea); }
+.fila-sug .btn { padding: 4px 10px; margin-left: 4px; }

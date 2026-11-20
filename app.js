@@ -51,7 +51,7 @@ async function crearSupabase() {
     async ajustes() { return ok(await sb.from('ajustes').select('*')); },
     async espacio() { return ok(await sb.rpc('espacio_usado')); },
     async guardarAjuste(clave, valor) { ok(await sb.from('ajustes').upsert({ clave, valor })); },
-    async usoIA() { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return ok(await sb.from('uso_ia').select('costo_usd').gte('creado_en', d.toISOString())); },
+    async usoIA() { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return ok(await sb.from('uso_ia').select('costo_usd,modelo,tarea').gte('creado_en', d.toISOString())); },
     async generarRepaso(datos) { const r = await sb.functions.invoke('corregir', { body: { accion: 'generar', ...datos } }); if (r.error) throw r.error; if (!r.data?.items) throw new Error(r.data?.omitido || r.data?.error || 'sin tarea'); return r.data; },
     async evaluarPronunciacion(audio, texto) { const r = await sb.functions.invoke('pronunciacion', { body: { audio, texto } }); if (r.error) throw r.error; return r.data; },
     async corregirIA(intento_id) { const r = await sb.functions.invoke('corregir', { body: { intento_id } }); if (r.error) throw r.error; return r.data; },
@@ -168,7 +168,7 @@ async function crearDemo() {
     async evaluarPronunciacion() { return { total: 82, exactitud: 85, fluidez: 78, completitud: 100, palabras: [{ palabra: 'привет', nota: 92, error: 'None' }, { palabra: 'меня', nota: 64, error: 'Mispronunciation' }, { palabra: 'зовут', nota: 88, error: 'None' }] }; },
     async generarRepaso(d0) { return { enunciado: 'Responde las preguntas con frases completas.', items: [{ pregunta: 'Какой у тебя дом?', palabras: d0.palabras.slice(0, 2).map(p => p.lema), reglas: d0.reglas.map(g => g.nombre) }, { pregunta: 'Ты работаешь?', palabras: d0.palabras.slice(2).map(p => p.lema) }] }; },
     async ajustes() { return [{ clave: 'ia_activa', valor: new URLSearchParams(location.search).has('ia') }, { clave: 'pronunciacion_activa', valor: new URLSearchParams(location.search).has('pron') }, { clave: 'ia_tope_mensual_usd', valor: 5 }]; },
-    async espacio() { return [{ tipo: 'base', nombre: 'base de datos', bytes: 61e6 }, { tipo: 'archivos', nombre: 'materiales', bytes: 640e6, archivos: 352 }, { tipo: 'archivos', nombre: 'grabaciones', bytes: 95e6, archivos: 40 }, { tipo: 'archivos', nombre: 'examenes', bytes: 110e6, archivos: 300 }]; }, async guardarAjuste() {}, async usoIA() { return []; }, async funcionClase(b) { await new Promise(r => setTimeout(r, 400)); if (b.accion === 'analizar') return { reglas: (b.reglas || []).slice(0, 3).map((g, i) => ({ id: g.id, ok: i !== 1 })), errores: [{ original: 'я живу в Куэнка', correccion: 'я живу в Куэнке', explicacion: 'prepositivo tras в' }] }; return {}; },
+    async espacio() { return [{ tipo: 'base', nombre: 'base de datos', bytes: 61e6 }, { tipo: 'archivos', nombre: 'materiales', bytes: 640e6, archivos: 352 }, { tipo: 'archivos', nombre: 'grabaciones', bytes: 95e6, archivos: 40 }, { tipo: 'archivos', nombre: 'examenes', bytes: 110e6, archivos: 300 }]; }, async guardarAjuste() {}, async usoIA() { return [{ costo_usd: 0.0021, modelo: 'claude-haiku-5-5', tarea: 'escritura' }, { costo_usd: 0.1, modelo: 'scribe_v3', tarea: 'transcripcion_clase' }, { costo_usd: 0.004, modelo: 'claude-haiku-5-5', tarea: 'analisis_clase' }]; }, async funcionClase(b) { await new Promise(r => setTimeout(r, 400)); if (b.accion === 'analizar') return { reglas: (b.reglas || []).slice(0, 3).map((g, i) => ({ id: g.id, ok: i !== 1 })), errores: [{ original: 'я живу в Куэнка', correccion: 'я живу в Куэнке', explicacion: 'prepositivo tras в' }] }; return {}; },
     async transcribirClase() { await new Promise(r => setTimeout(r, 800)); const fr = (sp, t) => t.split(' ').flatMap((w, i) => [...(i ? [{ text: ' ', type: 'spacing', speaker_id: sp }] : []), { text: w, type: 'word', speaker_id: sp }]);
       const ws = [['speaker_0', 'Привет! Как дела? Расскажи, что ты делал в выходные?'], ['speaker_1', 'Привет! Хорошо. В субботу я был дома, я читал книгу.'], ['speaker_0', 'Очень хорошо. А где ты живёшь?'], ['speaker_1', 'Я живу в Куэнка. Мой дом большой, есть кухня и две комнаты.'], ['speaker_0', 'Отлично. Bueno, ahora vamos a practicar.'], ['speaker_1', 'Sí. Я люблю пить кофе утром.']].flatMap(([s, t], i) => [...(i ? [{ text: '\n', type: 'spacing', speaker_id: s }] : []), ...fr(s, t)]);
       return { audio_duration_secs: 1800, words: ws }; },
@@ -1534,9 +1534,11 @@ function bloqueClase(uid, m) {
       const sp = paso.querySelector('input[name=hab]:checked')?.value; if (!sp) { est.textContent = 'Marca quién es el alumno.'; return; }
       bA.disabled = true; est.textContent = 'Analizando con IA… ⏳';
       const texto = turnos.filter(t => t.sp === sp).map(t => t.texto).join('\n');
+      const dialogo = turnos.map(t => `${t.sp === sp ? 'ALUMNO' : 'PROFESORA'}: ${t.texto}`).join('\n');
       try {
-        const reglas = [...m.conocidos].filter(id => /^G/.test(id) && m.regla[id]).map(id => ({ id, nombre: m.regla[id].nombre }));
-        const r = await api.funcionClase({ accion: 'analizar', texto, reglas, segundos: transcripcion.audio_duration_secs || 0 });
+        // todas las reglas de gramática del curso (no solo las ya presentadas): el alumno puede usar en clase cosas que aún no vio aquí
+        const reglas = Object.values(m.regla).filter(g => /^G/.test(g.id)).map(g => ({ id: g.id, nombre: g.nombre }));
+        const r = await api.funcionClase({ accion: 'analizar', texto, dialogo, reglas, segundos: transcripcion.audio_duration_secs || 0 });
         await vistaPrevia(texto, r);
       } catch (e) { est.textContent = '✗ ' + (e.message || 'No se pudo analizar.'); }
       bA.disabled = false;
@@ -1578,7 +1580,7 @@ function leerProduccion(texto) {
   const out = new Map();
   for (const linea of String(texto || '').split(/\n/)) {
     const mal = /(:|=)\s*0\s*$|✗/.test(linea.trim());       // «:0» al final de la línea o ✗ = producido con error
-    for (const m of linea.matchAll(/\b([VG]\d{2,4})\b/g)) out.set(m[1], mal ? 0 : 1);
+    for (const m of linea.matchAll(/\b([VGP]\d{2,4})\b/g)) out.set(m[1], mal ? 0 : 1);
   }
   return [...out].map(([id, ok]) => `${id}|${ok}|p`);
 }
@@ -1586,11 +1588,35 @@ function bloqueProduccion(uid, { titulo = 'Registrar producción (ensayo o clase
   const hoy = new Date().toISOString().slice(0, 10);
   const b = h(`<div class="tarjeta"><b>${titulo}</b>
     <p class="sub" style="margin:6px 0">Pega la lista de palabras y reglas que el alumno produjo correctamente (códigos V… y G…; agrega «:0» al final de la línea de las que produjo mal). Cuentan para su calendario de repaso.</p>
+    <div class="buscador-prod"><input type="text" placeholder="Buscar regla o palabra por nombre: acusativo, prepositivo, книга, casa…" autocomplete="off"><div class="sug"></div></div>
     <textarea placeholder="V0643 привет&#10;V0931 я&#10;G07 Меня зовут…&#10;V0330 как:0"></textarea>
     <div class="acciones">${conFecha ? `<input type="date" value="${hoy}">` : ''}<button class="btn" type="button">Guardar producción</button><span class="estado sub"></span></div></div>`);
-  b.querySelector('button').onclick = async () => {
+  // buscador: al escribir un nombre muestra reglas (G/P) y palabras (V); ✓ agrega la línea, ✗ la agrega como producida con error
+  const busc = b.querySelector('.buscador-prod input'), sug = b.querySelector('.sug'), ta = b.querySelector('textarea');
+  const sinTilde = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ё/g, 'е');
+  let tb = null;
+  busc.oninput = () => {
+    clearTimeout(tb);
+    tb = setTimeout(async () => {
+      const q = sinTilde(busc.value.trim()); sug.innerHTML = '';
+      if (q.length < 2) return;
+      const reglas = reglasCache || await api.reglas().catch(() => []);
+      const voc = vocabCache || [];
+      const res = [...reglas.filter(g => sinTilde(g.id + ' ' + g.nombre).includes(q)).slice(0, 12).map(g => ({ id: g.id, t: g.nombre, d: /^P/.test(g.id) ? 'pronunciación' : 'regla' })),
+        ...voc.filter(v => sinTilde(v.lema + ' ' + v.traduccion).includes(q)).slice(0, 8).map(v => ({ id: v.id, t: v.lema, d: v.traduccion || 'palabra' }))];
+      if (!res.length) { sug.innerHTML = '<p class="sub">Sin resultados.</p>'; return; }
+      for (const x of res) {
+        const f = h(`<div class="fila-sug"><span><b>${esc(x.t)}</b> <small class="sub">${esc(x.id)} · ${esc(x.d)}</small></span><span><button type="button" class="btn sec" title="Producida bien">✓</button><button type="button" class="btn sec" title="Producida con error">✗</button></span></div>`);
+        const [bOk, bMal] = f.querySelectorAll('button');
+        const agregar = mal => { ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + `${x.id} ${x.t}${mal ? ':0' : ''}`; busc.value = ''; sug.innerHTML = ''; busc.focus(); };
+        bOk.onclick = () => agregar(false); bMal.onclick = () => agregar(true);
+        sug.append(f);
+      }
+    }, 200);
+  };
+  b.querySelector('.acciones .btn').onclick = async () => {
     const refs = leerProduccion(b.querySelector('textarea').value), est = b.querySelector('.estado');
-    if (!refs.length) { est.textContent = 'No encontré códigos V… o G… en el texto.'; return; }
+    if (!refs.length) { est.textContent = 'No encontré códigos V…, G… o P… en el texto.'; return; }
     const f = b.querySelector('input[type=date]')?.value;
     try {
       await api.registrarPara(uid, 'produccion', refs, f && f !== hoy ? new Date(f + 'T12:00:00').toISOString() : null);
@@ -2147,7 +2173,7 @@ async function tAjustes(el) {
     <label class="interruptor"><input type="checkbox" ${A.ia_activa === true ? 'checked' : ''}> <b>IA activa: corrección de escritura y repasos escritos generados</b></label>
     <label class="interruptor" style="margin-top:8px"><input type="checkbox" data-pron ${A.pronunciacion_activa === true ? 'checked' : ''}> <b>Piloto: evaluación de pronunciación con Azure</b> <span class="sub">(requiere AZURE_SPEECH_KEY y AZURE_SPEECH_REGION en Supabase y la función «pronunciacion»)</span></label>
     <div class="campo" style="max-width:260px;margin-top:14px"><label>Tope de gasto mensual (USD)</label><input type="number" min="0" step="0.5" value="${Number(A.ia_tope_mensual_usd ?? 5)}"></div>
-    <p>Gasto de este mes: <b>$${gasto.toFixed(4)}</b> · ${uso.length} correcciones</p>
+    <p>Gasto de este mes: <b>$${gasto.toFixed(4)}</b></p>${tablaGastos(uso)}
     <p class="sub">Requiere la clave de Anthropic guardada como secreto en Supabase (ANTHROPIC_API_KEY) y la función «corregir» desplegada. Las correcciones quedan en «Por revisar» para que las confirmes.</p>
     <div class="acciones"><button class="btn" type="button">Guardar</button></div><p class="ok-msg"></p></div>`);
   c.querySelector('button').onclick = async () => {
@@ -2157,6 +2183,16 @@ async function tAjustes(el) {
     c.querySelector('.ok-msg').textContent = 'Guardado ✓';
   };
   el.append(c);
+}
+// gasto del mes por proveedor (según el modelo registrado en cada uso)
+function tablaGastos(uso) {
+  const prov = r => /^claude/.test(r.modelo || '') ? 'Anthropic API (Claude)' : /^scribe/.test(r.modelo || '') ? 'ElevenLabs API (transcripción)' : /azure/.test(r.modelo || '') ? 'Microsoft Azure (pronunciación)' : 'Otro';
+  const NOM = { escritura: 'corrección de textos', generar_repaso: 'repasos escritos', analisis_clase: 'análisis de clases', transcripcion_clase: 'transcripción de clases', pronunciacion: 'evaluación de pronunciación' };
+  const g = new Map();
+  for (const r of uso) { const k = prov(r); const x = g.get(k) || { n: 0, usd: 0, tareas: new Map() }; x.n++; x.usd += Number(r.costo_usd || 0); x.tareas.set(r.tarea, (x.tareas.get(r.tarea) || 0) + 1); g.set(k, x); }
+  if (!g.size) return '<p class="sub">Aún no hay usos este mes.</p>';
+  return `<table class="tabla"><tr><th>Proveedor</th><th>Usos</th><th>USD (mes)</th></tr>${[...g].sort((a, b) => b[1].usd - a[1].usd).map(([k, x]) => `<tr><td>${esc(k)}<br><small class="sub">${[...x.tareas].map(([t, n]) => `${esc(NOM[t] || t || '—')}: ${n}`).join(' · ')}</small></td><td>${x.n}</td><td>$${x.usd.toFixed(4)}</td></tr>`).join('')}</table>
+    <p class="sub">ElevenLabs: monto estimado (USD 0,20 por hora de audio). Si tu plan de ElevenLabs incluye créditos de API, se descuentan de ahí y no se cobra aparte.</p>`;
 }
 // examen y certificado: solo plan Pro
 const planConCertificado = () => perfil?.plan === 'pro' || location.search.includes('demo');
