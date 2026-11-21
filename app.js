@@ -426,7 +426,6 @@ async function resolverImgs(el) {
     if (u) im.src = u; else im.replaceWith(h(`<span class="sub">(imagen ${esc(im.dataset.mat)} no disponible)</span>`));
   }
 }
-// Tarjetas para descubrir: leer la palabra, pensar, voltear (imagen + traducción) y autoevaluarse
 
 // ---------- Voz: lee palabras rusas con la voz del dispositivo (sin archivos de audio)
 const HAY_VOZ = 'speechSynthesis' in window;
@@ -499,23 +498,50 @@ function celebrarNivel(nivel, eventos) {
     } else o.remove();
   });
 }
+// Tarjetas para descubrir: una a la vez (imagen + palabra rusa con audio); el alumno escribe qué cree que significa,
+// la tarjeta se voltea y muestra la traducción. No se penaliza el error; si acierta, la palabra entra al repaso como reconocida.
+const sinArticulo = x => norm(x).replace(/^(el|la|los|las|un|una|unos|unas|lo)\s+/, '');
+function distancia(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+function traduccionOk(resp, es) {
+  const r = sinArticulo(resp); if (!r) return false;
+  const opciones = String(es || '').split(/[,;/()]|\s+o\s+/).map(sinArticulo).filter(Boolean);
+  return opciones.some(o => o === r || distancia(o, r) <= (o.length >= 8 ? 2 : o.length >= 4 ? 1 : 0)
+    || (r.length >= 4 && (` ${o} `).includes(` ${r} `)));
+}
 function rDescubrir(c) {
-  const el = h(`<div class="tarjetas"></div>`); const res = c.tarjetas.map(() => null);
-  c.tarjetas.forEach((t, i) => {
-    const f = h(`<div class="tarjeta-desc"><div class="ru">${esc(t.ru)}</div>${t.tr ? `<div class="tr">${esc(t.tr)}</div>` : ''}
-      <button class="btn sec" type="button">Ver significado</button>
-      <div class="dorso" hidden>${t.img ? `<img data-mat="${esc(t.img)}" alt="">` : ''}<div class="es">${esc(t.es)}</div>${t.nota ? `<div class="sub">${esc(t.nota)}</div>` : ''}
-        <div class="acciones" style="margin-top:8px"><button class="btn" type="button" data-s="1">Lo sabía</button><button class="btn sec" type="button" data-s="0">No lo sabía</button></div></div></div>`);
-    f.querySelector('button').onclick = async e => { e.target.style.display = 'none'; f.querySelector('.dorso').hidden = false; await resolverImgs(f); };
-    f.querySelector('.ru').append(' ', botonVoz(t.ru));
-    f.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { res[i] = b.dataset.s === '1'; f.classList.remove('ok', 'mal'); f.classList.add(res[i] ? 'ok' : 'mal'); });
-    el.append(f);
-  });
-  return { el, corregir() {
-    if (res.some(x => x === null)) throw new Error('Voltea todas las tarjetas y marca si sabías cada palabra.');
-    const det = c.tarjetas.map((t, i) => ({ q: t.ru, r: res[i] ? 'sabía' : 'no sabía', c: t.ru, ok: res[i], p: false }));
-    return { total: det.length, bien: det.filter(d => d.ok).length, respuesta: res, detalle: det };
+  const el = h(`<div class="desc-una"></div>`); const res = c.tarjetas.map(() => null);
+  const r = { el, propio: true, alTerminar: null, corregir() {
+    const det = c.tarjetas.map((t, i) => ({ q: t.ru, r: res[i] ? 'reconoció' : '', c: t.ru, ok: true, p: false })).filter((_, i) => res[i]);
+    return { total: c.tarjetas.length, bien: c.tarjetas.length, aciertos: res.filter(Boolean).length, respuesta: res, detalle: det, sinNota: true };
   } };
+  const mostrar = k => {
+    const t = c.tarjetas[k];
+    const f = h(`<div class="tarjeta-desc grande-desc"><div class="etq">Tarjeta ${k + 1} de ${c.tarjetas.length}</div>
+      ${t.img ? `<img data-mat="${esc(t.img)}" alt="">` : ''}<div class="ru">${esc(t.ru)}</div>${t.tr ? `<div class="tr">${esc(t.tr)}</div>` : ''}
+      <div class="frente"><label class="sub" style="display:block;margin:10px 0 4px">¿Qué crees que significa? Escríbelo en español:</label>
+        <input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="en español">
+        <div class="acciones" style="justify-content:center"><button class="btn" type="button">Enviar</button></div></div>
+      <div class="dorso" hidden><div class="es">${esc(t.es)}</div>${t.nota ? `<div class="sub">${esc(t.nota)}</div>` : ''}<div class="marca-res"></div>
+        <div class="acciones" style="justify-content:center"><button class="btn" type="button">${k + 1 < c.tarjetas.length ? 'Siguiente tarjeta →' : 'Terminar'}</button></div></div></div>`);
+    f.querySelector('.ru').append(' ', botonVoz(t.ru));
+    const inp = f.querySelector('.frente input'), [bE, bS] = f.querySelectorAll('.acciones .btn');
+    const enviar = () => {
+      res[k] = traduccionOk(inp.value, t.es);
+      f.querySelector('.frente').remove(); f.querySelector('.dorso').hidden = false;      // lo escrito desaparece: no se muestra ni se penaliza
+      if (res[k]) { f.classList.add('ok'); f.querySelector('.marca-res').textContent = '✓ ¡Lo adivinaste!'; }
+      bS.focus();
+    };
+    bE.onclick = enviar; inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); enviar(); } };
+    bS.onclick = () => { if (k + 1 < c.tarjetas.length) mostrar(k + 1); else { el.innerHTML = `<p class="instr">¡Listo! Viste las ${c.tarjetas.length} tarjetas.</p>`; r.alTerminar?.(); } };
+    el.innerHTML = ''; el.append(f); resolverImgs(f); setTimeout(() => inp.focus(), 0);
+  };
+  mostrar(0);
+  return r;
 }
 // Seguir el trazo: el alumno repasa con el dedo o el mouse una letra cursiva (fuente Bad Script)
 function rTrazo(c) {
@@ -961,10 +987,11 @@ async function vEjercicio(id) {
   const r = await renderizar(ejR);
   setTimeout(() => resolverImgs(card), 0);
   card.querySelector('.cuerpo').append(r.el);
-  if (card.querySelector('.cuerpo input[type=text], .cuerpo textarea')) card.querySelector('.cuerpo').after(tecladoRuso(card));
+  if (!r.propio && card.querySelector('.cuerpo input[type=text], .cuerpo textarea')) card.querySelector('.cuerpo').after(tecladoRuso(card));
   const acc = card.querySelector(':scope > .acciones'), res = card.querySelector(':scope > .res');
   const bEnviar = h(`<button class="btn" type="button">${r.abierta ? 'Enviar' : 'Comprobar'}</button>`);
   acc.append(bEnviar);
+  if (r.propio) { bEnviar.hidden = true; r.alTerminar = () => bEnviar.onclick(); }   // la actividad tiene sus propios botones
   bEnviar.onclick = async () => {
     bEnviar.disabled = true; res.innerHTML = '';
     try {
@@ -985,7 +1012,8 @@ async function vEjercicio(id) {
       } else {
         const puntaje = Math.round(100 * out.bien / out.total);
         await api.guardarIntento({ ejercicio_id: id, respuesta: { valores: out.respuesta, detalle: out.detalle }, correcto: puntaje === 100, puntaje, estado: 'corregido' });
-        res.append(h(`<div class="resultado ${puntaje === 100 ? 'ok' : 'mal'}">${puntaje === 100 ? '¡Perfecto! ' : ''}${out.bien} de ${out.total} correctas (${puntaje} %)${out.flexible && puntaje < 100 ? ' · en este ejercicio se aceptan variantes razonables' : ''}</div>`));
+        if (out.sinNota) res.append(h(`<div class="resultado ok">${out.aciertos ? `Adivinaste ${out.aciertos} de ${out.total} ${out.total === 1 ? 'palabra' : 'palabras'}: ${out.aciertos === 1 ? 'entra' : 'entran'} a tu repaso. ` : ''}¡Sigue así!</div>`));
+        else res.append(h(`<div class="resultado ${puntaje === 100 ? 'ok' : 'mal'}">${puntaje === 100 ? '¡Perfecto! ' : ''}${out.bien} de ${out.total} correctas (${puntaje} %)${out.flexible && puntaje < 100 ? ' · en este ejercicio se aceptan variantes razonables' : ''}</div>`));
         if (puntaje < 100) {
           const reglas = await api.gramatica(ids(ej.gramatica_objetivo));
           for (const g of reglas) res.append(h(`<div class="regla"><b>Repasa: ${esc(g.nombre)}</b>${esc(g.descripcion || '')}${g.ejemplo ? `<div class="ej">${esc(g.ejemplo)}</div>` : ''}</div>`));

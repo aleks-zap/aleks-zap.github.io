@@ -210,3 +210,8 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .tabla-legal{overflow-x:auto;margin:10px 0}
 .legal table{border-collapse:collapse;width:100%;font-size:14px}
 .legal th,.legal td{border:1px solid var(--linea);padding:6px 8px;text-align:left;vertical-align:top}
+/* tarjetas para descubrir: una a la vez */
+.desc-una{max-width:420px;margin:0 auto}
+.grande-desc img{max-height:220px}
+.grande-desc input{width:100%;text-align:center}
+.grande-desc .dorso .es{font-size:24px}

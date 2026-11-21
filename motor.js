@@ -25,7 +25,7 @@ const INTERVALOS_DIAS = [1, 3, 7, 21, 60];
 const PESO_REGLA = 12;          // una regla nueva "pesa" como 12 palabras nuevas
 export const PALABRAS_POR_TARJETA = 12;
 
-export const ALFABETO = [['EJ0003', 'АОКМТ'], ['EJ0007', 'СРУВХЕН'], ['EJ0013', 'БИЛГПДФЗЭ'], ['EJ0018', 'ЖЧЦШЩЮЯЁЙЫЬЪ']];
+export const ALFABETO = [['EJ0003', 'АОКМТС'], ['EJ0007', 'РУВХЕН'], ['EJ0013', 'БИЛГПДФЗЭ'], ['EJ0018', 'ЖЧЦШЩЮЯЁЙЫЬЪ']];
 export const EJ_REPASO = 'EJ_REPASO', EJ_UBICACION = 'EJ_UBICACION';                        // intentos de los repasos escritos generados con IA
 export const MIN_ESCRITO = 3, MAX_ESCRITO_V = 6, MAX_ESCRITO_G = 2;   // palabras activas vencidas para armar un repaso escrito
 export const ORALES = new Set(['TE01', 'TE15', 'TE17']);   // escuchar y repetir, producción oral, leer en voz alta
