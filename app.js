@@ -35,10 +35,12 @@ async function crearSupabase() {
     async sesion() { return (await sb.auth.getSession()).data.session; },
     async login(email, password) { ok(await sb.auth.signInWithPassword({ email, password })); },
     async logout() { await sb.auth.signOut(); },
-    async registro(nombre, email, password) { return ok(await sb.auth.signUp({ email, password, options: { data: { nombre }, emailRedirectTo: location.origin + location.pathname } })); },
+    async registro(nombre, email, password) { return ok(await sb.auth.signUp({ email, password, options: { data: { nombre, terminos_cuenta: TERMINOS_CUENTA }, emailRedirectTo: location.origin + location.pathname } })); },
     async recuperar(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname + '#/nueva-clave' })); },
     async nuevaClave(password) { ok(await sb.auth.updateUser({ password })); },
     async cambiarNombre(nombre) { ok(await sb.rpc('cambiar_mi_nombre', { p_nombre: nombre })); },
+    async misAceptaciones() { return ok(await sb.from('aceptaciones').select('documento,version,aceptado_en').eq('usuario', sesion.user.id)); },
+    async aceptar(documento, version) { ok(await sb.rpc('aceptar_documento', { p_documento: documento, p_version: version })); },
     async cambiarCorreo(email) { ok(await sb.auth.updateUser({ email }, { emailRedirectTo: location.origin + location.pathname })); },
     async cambiarClave(actual, nueva) {      // se confirma la contraseña actual antes de cambiarla
       const r = await sb.auth.signInWithPassword({ email: sesion.user.email, password: actual });
@@ -163,7 +165,7 @@ async function crearDemo() {
   return {
     async sesion() { return new URLSearchParams(location.search).get('demo') === 'publico' ? null : { user: { id: 'demo', email: 'demo@demo' } }; },
     async login() {}, async logout() {},
-    async registro() { return { session: null }; }, async recuperar() {}, async nuevaClave() {}, async cambiarNombre() {}, async cambiarCorreo() {}, async cambiarClave(a) { if (a !== 'demo1234') throw new Error('La contraseña actual no es correcta.'); },
+    async registro() { return { session: null }; }, async misAceptaciones() { return new URLSearchParams(location.search).get('terminos') === '0' && !sessionStorage.getItem('demo_acepto') ? [] : [{ documento: 'cuenta', version: TERMINOS_CUENTA }]; }, async aceptar() { sessionStorage.setItem('demo_acepto', '1'); }, async recuperar() {}, async nuevaClave() {}, async cambiarNombre() {}, async cambiarCorreo() {}, async cambiarClave(a) { if (a !== 'demo1234') throw new Error('La contraseña actual no es correcta.'); },
     async reportar(o) { console.log('reporte', o); }, async reportes() { return []; }, async resolverReporte() {},
     async evaluarPronunciacion() { return { total: 82, exactitud: 85, fluidez: 78, completitud: 100, palabras: [{ palabra: 'привет', nota: 92, error: 'None' }, { palabra: 'меня', nota: 64, error: 'Mispronunciation' }, { palabra: 'зовут', nota: 88, error: 'None' }] }; },
     async generarRepaso(d0) { return { enunciado: 'Responde las preguntas con frases completas.', items: [{ pregunta: 'Какой у тебя дом?', palabras: d0.palabras.slice(0, 2).map(p => p.lema), reglas: d0.reglas.map(g => g.nombre) }, { pregunta: 'Ты работаешь?', palabras: d0.palabras.slice(2).map(p => p.lema) }] }; },
@@ -179,7 +181,7 @@ async function crearDemo() {
     async subirFotoExamen() {}, async fotosExamen() { return []; },
     async certificados() { return [{ codigo: 'RU-A1-DEMO42', nombre: 'Alumno de prueba', nivel: 'A1', emitido_en: '2026-11-17', notas: { lexico: 88, lectura: 80, audicion: 75, escritura: 70, oral: 82 } }]; },
     async verificar(c) { return c.trim().toUpperCase() === 'RU-A1-DEMO42' ? { nombre: 'Alumno de prueba', nivel: 'A1', emitido_en: '2026-11-17' } : null; },
-    async perfil() { return { id: 'demo', plan: new URLSearchParams(location.search).get('plan') || 'completo', nombre: 'Alumno de prueba', rol: new URLSearchParams(location.search).get('demo') === 'docente' ? 'docente' : 'alumno', orales_zoom: new URLSearchParams(location.search).has('zoom') }; },
+    async perfil() { return { id: 'demo', plan: new URLSearchParams(location.search).get('plan') || 'completo', nombre: 'Alumno de prueba', rol: new URLSearchParams(location.search).get('demo') === 'docente' ? 'docente' : 'alumno', orales_zoom: new URLSearchParams(location.search).has('zoom'), plan_nivel: new URLSearchParams(location.search).get('nivel') || 'A1' }; },
     async todosEscenarios() { return d.escenarios; },
     async ejerciciosLigeros() { return d.ejercicios; },
     async reglas() { return d.reglas || []; },
@@ -616,7 +618,7 @@ async function cargarModelo(intentos, eventos, oralesZoom = false) {
     const ej0 = ejercicios.filter(e => LECCIONES_PRUEBA.includes(e.escenario));
     return { m: prepararModelo({ escenarios: esc0, ejercicios: ej0, tipos, intentos, eventos, reglas, temas, formas, vocab, oralesZoom, iaActiva: ia }), escenarios, vocab };
   }
-  if (perfil?.rol !== 'docente' && perfil?.plan === 'nivel' && perfil.plan_nivel) {      // compra de un nivel: solo las lecciones de ese nivel, para siempre
+  if (perfil?.rol !== 'docente' && PLANES_UN_NIVEL.includes(perfil?.plan) && perfil.plan_nivel) {      // compra de un nivel: solo las lecciones de ese nivel, para siempre
     const escN = escenarios.filter(x => (x.nivel || 'A1') === perfil.plan_nivel), ids = new Set(escN.map(x => x.id));
     return { m: prepararModelo({ escenarios: escN, ejercicios: ejercicios.filter(e => ids.has(e.escenario)), tipos, intentos, eventos, reglas, temas, formas, vocab, oralesZoom, iaActiva: ia }), escenarios, vocab };
   }
@@ -759,8 +761,9 @@ async function vInicio() {
   if (sig.tipo === 'descanso') {
     card.append(h(`<p class="instr">¡Buen trabajo por hoy! 💪</p>`));
     card.append(h(`<p>Tienes bastante vocabulario y gramática por repasar, así que por hoy no agregamos material nuevo: así lo que aprendiste se queda contigo. Mañana empezarás con el repaso y luego seguirás avanzando.</p>`));
-  } else if (sig.tipo === 'fin' && perfil?.plan === 'nivel') card.append(h(`<p class="instr">¡Terminaste todas las lecciones del nivel ${esc(perfil.plan_nivel || '')}! 🎉 Sigue con tu repaso diario para dominarlo.</p><div class="acciones"><a class="btn sec" href="#/planes">Ver el siguiente nivel</a></div>`));
-  else if (sig.tipo === 'fin') card.append(h(`<p class="instr">${proyeccion(m).logrado && !proyeccion(m).nivel ? '¡Completaste todo el contenido disponible! 🎉 Tu profesor agregará más pronto.' : 'Ya hiciste todas las lecciones disponibles. 🎉 Sigue con tu repaso diario: así llegarás a dominar el nivel.'}</p>`));
+  } else if (sig.tipo === 'fin' && perfil?.plan === 'gratuito') card.append(h(`<p class="instr">¡Terminaste todas las lecciones del nivel ${esc(perfil.plan_nivel || '')}! 🎉 Sigue con tu repaso diario para dominarlo.</p>`));
+  else if (sig.tipo === 'fin' && perfil?.plan === 'nivel') card.append(h(`<p class="instr">¡Terminaste todas las lecciones del nivel ${esc(perfil.plan_nivel || '')}! 🎉 Sigue con tu repaso diario para dominarlo.</p><div class="acciones"><a class="btn sec" href="#/planes">Ver el siguiente nivel</a></div>`));
+  else if (sig.tipo === 'fin') card.append(h(`<p class="instr">${proyeccion(m).logrado && !proyeccion(m).nivel ? '¡Completaste todo el contenido disponible! 🎉 Pronto habrá más lecciones.' : 'Ya hiciste todas las lecciones disponibles. 🎉 Sigue con tu repaso diario: así llegarás a dominar el nivel.'}</p>`));
   else if (sig.tipo === 'elegir') {
     card.append(h(`<p class="instr">¡Terminaste esta etapa! 🎉 ¿Con qué situación quieres seguir?</p>`));
     const l = h(`<div class="lista"></div>`);
@@ -834,7 +837,7 @@ async function vInicio() {
     o.querySelector('button').onclick = async ev => { ev.target.disabled = true; try { await api.registrar('ubicacion', ['no']); o.remove(); } catch { ev.target.disabled = false; } };
     $app.append(o);
   }
-  if (perfil?.plan === 'nivel' && !m.saltados.size && m.nuevasAnteriores.length > 3 && !m.respuestaCambio) { const tc = tarjetaCambioNivel(m); if (tc) $app.append(tc); }
+  if (PLANES_UN_NIVEL.includes(perfil?.plan) && !m.saltados.size && m.nuevasAnteriores.length > 3 && !m.respuestaCambio) { const tc = tarjetaCambioNivel(m); if (tc) $app.append(tc); }
   $app.append(card);
   if (enFlujo && ['regla', 'reglaUbicada', 'palabras', 'tarjetas', 'elegir', 'repasoEscrito'].includes(sig.tipo)) {     // en modo ejercicio: solo la tarea, sin el resto del inicio
     $app.innerHTML = ''; $app.append(h(`<div class="migas"><a href="#/">← Salir</a></div>`), card); return;
@@ -855,9 +858,12 @@ async function vInicio() {
   }
   $app.append(prog);
 
-  const coment = intentos.filter(i => i.estado === 'revisado' && i.feedback && i.ejercicio_id !== EJ_UBICACION).sort((a, b) => new Date(b.creado_en) - new Date(a.creado_en)).slice(0, 3);
+  // tareas escritas que la IA no alcanzó a corregir (falla o IA apagada): se reintenta en segundo plano
+  const sinCorregir = intentos.filter(i => i.estado === 'pendiente_ia' && i.respuesta?.texto && i.ejercicio_id !== EJ_UBICACION && Date.now() - new Date(i.creado_en) < 14 * 864e5).slice(0, 2);
+  if (sinCorregir.length) iaActiva().then(on => on && sinCorregir.forEach(i => api.corregirIA(i.id).catch(() => {})));
+  const coment = intentos.filter(i => ['revisado', 'pendiente_docente'].includes(i.estado) && i.feedback && i.ejercicio_id !== EJ_UBICACION).sort((a, b) => new Date(b.creado_en) - new Date(a.creado_en)).slice(0, 3);
   if (coment.length) {
-    const c = h(`<div class="tarjeta"><h2 style="margin-top:0">Comentarios de tu profesor</h2></div>`);
+    const c = h(`<div class="tarjeta"><h2 style="margin-top:0">Comentarios sobre tus tareas</h2></div>`);
     coment.forEach(i => c.append(h(`<div class="regla"><b><a href="#/x/${i.ejercicio_id}">Tarea ${esc(i.ejercicio_id)}</a>${i.puntaje != null ? ' · ' + Math.round(i.puntaje) + ' %' : ''}</b>${esc(i.feedback)}</div>`)));
     $app.append(c);
   }
@@ -967,15 +973,15 @@ async function vEjercicio(id) {
         if (perfil?.orales_zoom && ORALES.has(ej.tipo_ejercicio)) api.registrar('zoom', [id]).catch(() => {});
         const usarIA = !!out.respuesta?.texto && !ORALES.has(ej.tipo_ejercicio) && await iaActiva();
         const guardado = await api.guardarIntento({ ejercicio_id: id, respuesta: out.respuesta, audio_path: out.audio || null, correcto: null, puntaje: null,
-          estado: usarIA ? 'pendiente_ia' : (out.respuesta?.texto || out.audio) ? 'pendiente_docente' : 'corregido' });
+          estado: out.respuesta?.texto && !ORALES.has(ej.tipo_ejercicio) ? 'pendiente_ia' : out.audio || out.respuesta?.texto ? 'pendiente_docente' : 'corregido' });
         if (usarIA) {
           const espera = h(`<div class="resultado pend">Enviado. Revisando tu texto… ⏳</div>`); res.append(espera);
           try {
             const r = await api.corregirIA(guardado.id);
-            espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div></div>`) : h(`<div class="resultado pend">Enviado. Tu profesora lo revisará y verás sus comentarios aquí.</div>`));
+            espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div></div>`) : h(`<div class="resultado pend">${MSG_IA_PENDIENTE}</div>`));
             if (r?.feedback) registrarProduccion(out.respuesta.texto, r.errores);
-          } catch (e) { espera.textContent = 'Enviado. Tu profesora lo revisará y verás sus comentarios aquí.'; api.revisar(guardado.id, { estado: 'pendiente_docente' }).catch(() => {}); }
-        } else res.append(h(`<div class="resultado pend">${out.audio || out.respuesta?.texto ? 'Enviado. Tu profesor lo revisará y verás sus comentarios aquí.' : 'Práctica registrada.'}</div>`));
+          } catch (e) { espera.textContent = MSG_IA_PENDIENTE; }
+        } else res.append(h(`<div class="resultado pend">${out.respuesta?.texto && !ORALES.has(ej.tipo_ejercicio) ? MSG_IA_PENDIENTE : out.audio || out.respuesta?.texto ? 'Enviado. Tu profesora escuchará la grabación.' : 'Práctica registrada.'}</div>`));
       } else {
         const puntaje = Math.round(100 * out.bien / out.total);
         await api.guardarIntento({ ejercicio_id: id, respuesta: { valores: out.respuesta, detalle: out.detalle }, correcto: puntaje === 100, puntaje, estado: 'corregido' });
@@ -1014,9 +1020,9 @@ function repasoEscrito(card, t, ids, m, vocab) {
       const espera = h(`<div class="resultado pend">Enviado. Revisando tu texto… ⏳</div>`); res.append(espera);
       try {
         const r = await api.corregirIA(g.id);
-        espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div></div>`) : h(`<div class="resultado pend">Enviado. Tu profesora lo revisará.</div>`));
+        espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div></div>`) : h(`<div class="resultado pend">${MSG_IA_PENDIENTE}</div>`));
         await registrarProduccion(resp.map(x => x.value).join(' '), r?.errores, new Set(ids));
-      } catch (e) { espera.textContent = 'Enviado. Tu profesora lo revisará.'; api.revisar(g.id, { estado: 'pendiente_docente' }).catch(() => {}); }
+      } catch (e) { espera.textContent = MSG_IA_PENDIENTE; }
       acc.innerHTML = ''; acc.append(h(`<a class="btn" data-flujo href="#/">Siguiente tarea →</a>`));
     } catch (e) { res.append(h(`<p class="error">${esc(e.message || 'No se pudo guardar.')}</p>`)); ev.target.disabled = false; }
   };
@@ -1034,7 +1040,7 @@ async function registrarProduccion(texto, errores, excluir = new Set()) {
 }
 
 // ================================================================ prueba de ubicación (solo planes pagados)
-const PLANES_PAGADOS = ['plataforma', 'pro', 'nivel', 'completo', 'zoom_grupal', 'zoom_individual'];
+const PLANES_PAGADOS = ['plataforma', 'pro', 'nivel', 'gratuito', 'completo', 'zoom_grupal', 'zoom_individual'];   // reciben la pregunta de ubicación
 function necesitaUbicacion(m, intentos, eventos) {
   if (!perfil || perfil.rol === 'docente' || !PLANES_PAGADOS.includes(perfil.plan) || enPrueba()) return false;
   if (eventos.some(v => v.tipo === 'ubicacion')) return false;
@@ -1389,16 +1395,16 @@ async function tAlumno(el, uid) {
   const zt = h(`<label style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" ${p.orales_zoom ? 'checked' : ''}> Parte oral por Zoom: los ejercicios orales no se le muestran y van a la lista de la clase</label>`);
   zt.querySelector('input').onchange = async e => { await api.actualizarPerfil(uid, { orales_zoom: e.target.checked }); location.reload(); };
   el.append(zt);
-  const PL = [['prueba', 'Prueba gratis (solo primera lección)'], ['plataforma', 'Esencial'], ['pro', 'Pro (con examen y certificado)'], ['nivel', 'Un nivel (pago único, sin vencimiento)'], ['completo', 'Acceso completo (igual que Esencial, sin vencimiento)'],
+  const PL = [['prueba', 'Prueba gratis (solo primera lección)'], ['plataforma', 'Esencial'], ['pro', 'Pro (con examen y certificado)'], ['nivel', 'Un nivel (pago único, sin vencimiento)'], ['gratuito', 'Acceso gratuito (un nivel, sin pago ni vencimiento)'], ['completo', 'Acceso completo (igual que Esencial, sin vencimiento)'],
     ...[['zoom_grupal', 'Plataforma + Zoom grupal (anterior)'], ['zoom_individual', 'Plataforma + Zoom individual (anterior)']].filter(([k]) => p.plan === k)];
   const pf = h(`<div class="campo" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end"><div><label>Plan</label><select>${PL.map(([k, t]) => `<option value="${k}" ${p.plan === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
-    <div data-niv ${p.plan === 'nivel' ? '' : 'hidden'}><label>Nivel comprado</label><select>${['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map(n => `<option ${p.plan_nivel === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+    <div data-niv ${PLANES_UN_NIVEL.includes(p.plan) ? '' : 'hidden'}><label>Nivel</label><select>${['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map(n => `<option ${p.plan_nivel === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
     <div><label>Pagado hasta</label><input type="date" value="${esc(p.plan_hasta || '')}"></div><button class="btn sec" type="button">Guardar plan</button></div>`);
   const [selPlan, selNiv] = pf.querySelectorAll('select');
-  selPlan.onchange = () => { pf.querySelector('[data-niv]').hidden = selPlan.value !== 'nivel'; };
+  selPlan.onchange = () => { pf.querySelector('[data-niv]').hidden = !PLANES_UN_NIVEL.includes(selPlan.value); };
   pf.querySelector('button').onclick = async () => {
     const cambios = { plan: selPlan.value, plan_hasta: pf.querySelector('input').value || null };
-    if (selPlan.value === 'nivel') cambios.plan_nivel = selNiv.value;
+    if (PLANES_UN_NIVEL.includes(selPlan.value)) cambios.plan_nivel = selNiv.value;
     await api.actualizarPerfil(uid, cambios); pf.querySelector('button').textContent = 'Guardado ✓';
   };
   el.append(pf);
@@ -1998,12 +2004,17 @@ function vRegistro(msg = '') {
     <div class="campo"><label>Tu nombre</label><input required autocomplete="name"></div>
     <div class="campo"><label>Correo</label><input type="email" required autocomplete="email"></div>
     <div class="campo"><label>Contraseña (mínimo 8 caracteres)</label><input type="password" required minlength="8" autocomplete="new-password"></div>
-    <label class="sub" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" required style="width:auto;margin-top:4px"> Acepto los términos de uso y la política de privacidad (tus datos solo se usan para el curso).</label>
-    <p class="error">${esc(msg)}</p><button class="btn" type="submit">Crear cuenta</button>
+    <label class="sub acepto"><input type="checkbox" style="width:auto;margin-top:4px"> <span>Acepto los <a href="#/terminos" data-terminos>Términos y la Política de privacidad</a>.</span></label>
+    <p class="sub aviso-ia">Tus tareas escritas las corrige una inteligencia artificial (Anthropic, Estados Unidos), sin tu nombre ni tu correo y sin revisión de una persona. Es parte del servicio: sin aceptarlo no se crea la cuenta.</p>
+    <p class="error">${esc(msg)}</p><button class="btn" type="submit" disabled>Crear cuenta</button>
     <p class="sub">¿Ya tienes cuenta? <a href="#/entrar">Entrar</a></p></form>`);
+  const casilla = f.querySelector('.acepto input'), bCrear = f.querySelector('button[type=submit]');
+  casilla.onchange = () => { bCrear.disabled = !casilla.checked; };
+  f.querySelector('[data-terminos]').onclick = ev => { ev.preventDefault(); verTerminos(); };
   f.onsubmit = async e => {
     e.preventDefault(); const [nom, em, pw] = f.querySelectorAll('input');
-    f.querySelector('button').disabled = true;
+    if (!casilla.checked) return;
+    bCrear.disabled = true;
     try {
       const r = await api.registro(nom.value.trim(), em.value.trim(), pw.value);
       if (r?.session) return iniciar();
@@ -2041,11 +2052,12 @@ function vNuevaClave() {
 
 // Plan del alumno: 'prueba' solo abre la primera lección (alfabeto). LECCIONES_INICIO = las que no cuentan como «ya avanzó» para la prueba de ubicación
 const LECCIONES_PRUEBA = ['E01'];
+const PLANES_UN_NIVEL = ['nivel', 'gratuito'];   // 'gratuito' = acceso gratuito que habilita la docente: solo las lecciones de plan_nivel, sin vencimiento
 const LECCIONES_INICIO = ['E01', 'E03'];
 function enPrueba() {
   if (!perfil || perfil.rol === 'docente') return false;
   if (perfil.plan === 'prueba') return true;
-  if (!['completo', 'nivel'].includes(perfil.plan) && perfil.plan_hasta && new Date(perfil.plan_hasta + 'T23:59:59') < new Date()) return true;   // plan vencido (un nivel comprado no vence)
+  if (!['completo', 'nivel', 'gratuito'].includes(perfil.plan) && perfil.plan_hasta && new Date(perfil.plan_hasta + 'T23:59:59') < new Date()) return true;   // plan vencido (un nivel comprado no vence)
   return false;
 }
 function tarjetaFinPrueba() {
@@ -2056,12 +2068,48 @@ function tarjetaFinPrueba() {
     <div class="acciones"><a class="btn" href="#/planes">Ver planes</a></div></div>`);
 }
 
+// ================================================================ términos y privacidad (texto en terminos.html)
+const TERMINOS_CUENTA = '2026-11-21';   // al cambiar terminos.html, cambia esta fecha: se pide de nuevo la aceptación
+const MSG_IA_PENDIENTE = 'Enviado. Tu texto quedó guardado: la corrección automática lo revisará pronto y verás los comentarios en tu inicio.';
+async function textoTerminos() {
+  const r = await fetch('terminos.html', { cache: 'no-cache' });
+  const d = new DOMParser().parseFromString(await r.text(), 'text/html');
+  return d.querySelector('main')?.innerHTML || '';
+}
+async function verTerminos() {      // ventana superpuesta: no se sale del formulario
+  const o = h(`<div class="felicidades ventana-legal"><div class="caja"><div class="legal"><p class="cargando">Cargando…</p></div><div class="acciones"><button class="btn" type="button">Cerrar</button></div></div></div>`);
+  o.querySelector('button').onclick = () => o.remove();
+  o.onclick = e => { if (e.target === o) o.remove(); };
+  document.body.append(o);
+  try { o.querySelector('.legal').innerHTML = await textoTerminos(); } catch { o.querySelector('.legal').innerHTML = '<p class="error">No se pudo cargar el documento.</p>'; }
+}
+async function vTerminos() {
+  nav();
+  $app.innerHTML = `<div class="tarjeta legal"><p class="cargando">Cargando…</p></div>`;
+  try { $app.querySelector('.legal').innerHTML = await textoTerminos(); } catch { $app.querySelector('.legal').innerHTML = '<p class="error">No se pudo cargar el documento.</p>'; }
+}
+async function vAceptarTerminos() {   // alumnos que aún no aceptaron esta versión (acceso gratuito recién habilitado, cuentas anteriores o términos nuevos)
+  nav();
+  $app.innerHTML = `<div class="tarjeta"><h1 style="margin-top:0">Términos y privacidad</h1><p class="sub">Antes de seguir, lee y acepta los términos de uso y la política de privacidad de tu cuenta.</p>
+    <div class="legal caja-legal"><p class="cargando">Cargando…</p></div>
+    <label class="sub acepto"><input type="checkbox" style="width:auto;margin-top:4px"> <span>Acepto los Términos y la Política de privacidad, incluida la corrección de mis tareas escritas con inteligencia artificial, sin revisión de una persona.</span></label>
+    <p class="error"></p><div class="acciones"><button class="btn" type="button" disabled>Aceptar y continuar</button><a class="btn sec" href="#/salir">Salir</a></div></div>`;
+  try { $app.querySelector('.legal').innerHTML = await textoTerminos(); } catch { $app.querySelector('.legal').innerHTML = '<p class="error">No se pudo cargar el documento. Recarga la página.</p>'; }
+  const c = $app.querySelector('.acepto input'), b = $app.querySelector('.acciones button');
+  c.onchange = () => { b.disabled = !c.checked; };
+  b.onclick = async () => {
+    b.disabled = true;
+    try { await api.aceptar('cuenta', TERMINOS_CUENTA); perfil.faltaTerminos = false; router(); }
+    catch (e) { $app.querySelector('.error').textContent = 'No se pudo guardar: ' + (e.message || 'inténtalo de nuevo.'); b.disabled = false; }
+  };
+}
+
 // ================================================================ mi cuenta: nombre, correo, contraseña
-const NOMBRE_PLAN = { prueba: 'Prueba gratis', plataforma: 'Esencial', pro: 'Pro', nivel: 'Un nivel', completo: 'Acceso completo', zoom_grupal: 'Plataforma + Zoom grupal', zoom_individual: 'Plataforma + Zoom individual' };
+const NOMBRE_PLAN = { prueba: 'Prueba gratis', plataforma: 'Esencial', pro: 'Pro', nivel: 'Un nivel', gratuito: 'Acceso gratuito', completo: 'Acceso completo', zoom_grupal: 'Plataforma + Zoom grupal', zoom_individual: 'Plataforma + Zoom individual' };
 function vCuenta() {
   nav('cuenta');
   const p = perfil || {};
-  const plan = `${NOMBRE_PLAN[p.plan] || p.plan || '—'}${p.plan === 'nivel' && p.plan_nivel ? ' ' + p.plan_nivel : ''}${p.plan_hasta && !['nivel', 'completo'].includes(p.plan) ? ` · hasta el ${new Date(p.plan_hasta + 'T12:00:00').toLocaleDateString('es')}` : ''}`;
+  const plan = `${NOMBRE_PLAN[p.plan] || p.plan || '—'}${PLANES_UN_NIVEL.includes(p.plan) && p.plan_nivel ? ' ' + p.plan_nivel : ''}${p.plan_hasta && !['nivel', 'gratuito', 'completo'].includes(p.plan) ? ` · hasta el ${new Date(p.plan_hasta + 'T12:00:00').toLocaleDateString('es')}` : ''}`;
   $app.innerHTML = `<div class="migas"><a href="#/">← Inicio</a></div><h1>Mi cuenta</h1>
     <div class="tarjeta"><p><b>Correo:</b> ${esc(sesion.user.email)}<br><b>Plan:</b> ${esc(plan)}</p>${p.plan === 'prueba' ? '<a class="btn sec" href="#/planes">Ver planes</a>' : ''}</div>`;
   const forma = (titulo, campos, boton, accion) => {
@@ -2473,12 +2521,14 @@ async function router() {
     if (r === 'verificar') return await vVerificar(decodeURIComponent(p || ''));
     if (r === 'nueva-clave') return vNuevaClave();
     if (r === 'pagar') return vPagar();
+    if (r === 'terminos') return await vTerminos();
     if (!sesion) {
       if (r === 'registro') return vRegistro();
       if (r === 'recuperar') return vRecuperar();
       if (r === 'entrar') return vLogin();
       return vPublico();
     }
+    if (perfil?.faltaTerminos && r !== 'salir') return await vAceptarTerminos();
     botonReporte();
     if (r === 'planes') return vPublico();
     if (r === 'examen') return await vExamen();
@@ -2501,6 +2551,10 @@ async function iniciar() {
   if (sesion) {
     try { perfil = await api.perfil(sesion.user.id); }
     catch { perfil = { rol: 'alumno', nombre: '' }; }
+    if (perfil?.rol !== 'docente') {
+      try { const a = await api.misAceptaciones(); perfil.faltaTerminos = !a.some(x => x.documento === 'cuenta' && x.version === TERMINOS_CUENTA); }
+      catch { /* tabla aún no creada (SQL 20): no se bloquea */ }
+    }
   }
   router();
 }

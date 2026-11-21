@@ -200,3 +200,13 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .buscador-prod input { width: 100%; }
 .fila-sug { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--linea); }
 .fila-sug .btn { padding: 4px 10px; margin-left: 4px; }
+/* términos y privacidad */
+.acepto{display:flex;gap:8px;align-items:flex-start;margin:6px 0}
+.aviso-ia{font-size:13px;margin:2px 0 8px}
+.ventana-legal .caja{max-width:760px;width:100%;max-height:88vh;overflow:auto;text-align:left;padding:22px 20px}
+.caja-legal{max-height:52vh;overflow:auto;border:1px solid var(--linea);border-radius:12px;padding:4px 14px;margin:10px 0;background:var(--papel)}
+.legal h1{font-size:1.5rem;margin:.4em 0} .legal h2{font-size:1.15rem;margin:1.2em 0 .4em}
+.legal p,.legal li{font-size:15px}
+.tabla-legal{overflow-x:auto;margin:10px 0}
+.legal table{border-collapse:collapse;width:100%;font-size:14px}
+.legal th,.legal td{border:1px solid var(--linea);padding:6px 8px;text-align:left;vertical-align:top}
