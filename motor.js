@@ -546,7 +546,7 @@ export function dominio(m, nivel, hasta = Infinity) {
     fracHab.length ? fracHab.reduce((a, b) => a + b, 0) / fracHab.length : 1];
   const PESOS = [0.4, 0.25, 0.25, 0.1];                          // palabras activas, reconocidas, reglas, habilidades
   const frac = partes.reduce((a, b, i) => a + b * PESOS[i], 0);
-  return { nivel, frac, partes, logrado: partes.every(x => x >= 1), act, metaAct, rec, metaRec, regOk, metaReg, hab, hayContenido: ejsNivel.some(e => nivelIdx(nivelEsc[e.escenario] || 'A1') === k) };
+  return { nivel, frac, partes, logrado: partes.every(x => x >= 1), act, metaAct, rec, metaRec, regOk, metaReg, hab, pal, reglas, hayContenido: ejsNivel.some(e => nivelIdx(nivelEsc[e.escenario] || 'A1') === k) };
 }
 export function proyeccion(m) {
   // nivel actual: el primero no logrado
@@ -559,23 +559,43 @@ export function proyeccion(m) {
   if (!d.hayContenido) return { completo: true, logrado, siguiente: actual, frac: 1 };
   const hechos = new Set(m.intentosOrd.map(i => i.ejercicio_id)).size;   // solo ejercicios hechos (los orales en espera de Zoom no cuentan)
   if (hechos < MIN_EJERCICIOS_PROYECCION) return { nivel: actual, logrado, dias: null, hechos, frac: d.frac, dom: d };
-  // ritmo de avance del dominio en los últimos 14 días (incluye el efecto del repaso)
-  const todos = [...m.intentosOrd.map(i => Date.parse(i.creado_en)), ...m.eventos.filter(v => ['tarjeta', 'zoom'].includes(v.tipo)).map(v => Date.parse(v.creado_en))];
+  // Ritmo: cuánto material nuevo del nivel (palabras y reglas) empieza a practicar el alumno por día, medido en las
+  // últimas 4 semanas (o desde que empezó). Lo dominado va detrás de lo practicado: se suma el tiempo de consolidación.
+  // (Medir solo lo dominado daba cifras absurdas al principio: casi nada está dominado en los primeros días.)
+  const todos = [...m.intentosOrd.map(i => Date.parse(i.creado_en)), ...m.eventos.filter(v => ['tarjeta', 'zoom', 'intro'].includes(v.tipo)).map(v => Date.parse(v.creado_en))];
   const inicio = Math.min(...todos);
   const ventana = Math.max(1, Math.min(28, (m.ahora - inicio) / DIA));
-  const antes = ventana >= 14 ? dominio(m, actual, m.ahora - ventana * DIA).partes : [0, 0, 0, 0];
-  // el nivel se logra cuando se completan todas las partes: manda la que más tardará
-  let dias = 0, ritmo = (d.frac - (ventana >= 14 ? antes.reduce((a, b, i) => a + b * [0.4, 0.25, 0.25, 0.1][i], 0) : 0)) / ventana;
-  d.partes.forEach((x, i) => {
-    if (x >= 1) return;
-    const r = (x - antes[i]) / ventana;
-    if (r > 0) dias = Math.max(dias, (1 - x) / r);
-    else if (x < 0.85) dias = Infinity;                          // casi completo: una oscilación no frena la estimación
-  });
-  // sin ninguna palabra activa o regla dominada todavía (se dominan al acertarlas en 2 días distintos) no hay ritmo que medir
-  const sinDominio = !Number.isFinite(dias) && (d.act === 0 || d.regOk === 0);
+  const desde = m.ahora - ventana * DIA;
+  const visto = primeraVez(m);
+  const activos = [...d.pal].filter(id => m.vocab[id]?.uso === 'activo');
+  const partes = [[activos, d.metaAct, d.act], [[...d.pal], d.metaRec, d.rec], [[...d.reglas], d.metaReg, d.regOk]];
+  let dias = 0;
+  for (const [ids, meta, logradas] of partes) {
+    if (logradas >= meta) continue;
+    const ahora = ids.filter(id => visto.has(id)).length, antes = ids.filter(id => (visto.get(id) ?? Infinity) <= desde).length;
+    const falta = Math.max(0, meta - ahora), r = (ahora - antes) / ventana;
+    if (falta && r <= 0) { dias = Infinity; break; }
+    dias = Math.max(dias, (falta ? falta / r : 0) + CONSOLIDACION_DIAS);
+  }
   dias = Number.isFinite(dias) ? Math.max(1, Math.ceil(dias)) : null;
-  return { nivel: actual, logrado, dias, hechos, frac: d.frac, dom: d, ritmo, sinDominio };
+  return { nivel: actual, logrado, dias, hechos, frac: d.frac, dom: d };
+}
+const CONSOLIDACION_DIAS = 14;      // de practicar algo por primera vez a dominarlo (aciertos en días distintos + repasos)
+// primera vez que el alumno practicó cada palabra o regla (presentación, ejercicio, tarjeta, producción o prueba de ubicación)
+function primeraVez(m) {
+  const f = new Map(), marca = (id, t) => { if (!f.has(id) || t < f.get(id)) f.set(id, t); };
+  if (m.ubicadoEn) for (const id of m.ubicados || []) marca(id, m.ubicadoEn);
+  for (const v of m.eventos) {
+    const t = Date.parse(v.creado_en);
+    if (v.tipo === 'intro') marca(v.ref, t);
+    if (v.tipo === 'tarjeta' || v.tipo === 'produccion') marca(v.ref.split('|')[0], t);
+  }
+  for (const i of m.intentosOrd) {
+    const e = m.porId.get(i.ejercicio_id); if (!e) continue;
+    const t = Date.parse(i.creado_en);
+    [...e.reqV, ...e.reqG, ...e.reqReglas, ...(e.ensena || [])].forEach(id => marca(id, t));
+  }
+  return f;
 }
 export function textoProyeccion(p, { alumno = true } = {}) {
   const pre = p.logrado ? `¡${alumno ? 'Ya tienes' : 'Ya tiene'} el nivel ${p.logrado} de ruso! 🎉 ` : '';

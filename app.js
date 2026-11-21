@@ -498,7 +498,7 @@ function celebrarNivel(nivel, eventos) {
     } else o.remove();
   });
 }
-// Tarjetas para descubrir: una a la vez (imagen + palabra rusa con audio); el alumno escribe qué cree que significa,
+// Tarjetas para descubrir: una a la vez (palabra rusa con audio, sin imagen); el alumno escribe qué cree que significa,
 // la tarjeta se voltea y muestra la traducción. No se penaliza el error; si acierta, la palabra entra al repaso como reconocida.
 const sinArticulo = x => norm(x).replace(/^(el|la|los|las|un|una|unos|unas|lo)\s+/, '');
 function distancia(a, b) {
@@ -522,17 +522,18 @@ function rDescubrir(c) {
   const mostrar = k => {
     const t = c.tarjetas[k];
     const f = h(`<div class="tarjeta-desc grande-desc"><div class="etq">Tarjeta ${k + 1} de ${c.tarjetas.length}</div>
-      ${t.img ? `<img data-mat="${esc(t.img)}" alt="">` : ''}<div class="ru">${esc(t.ru)}</div>${t.tr ? `<div class="tr">${esc(t.tr)}</div>` : ''}
+      <div class="ru">${esc(t.ru)}</div>${t.tr ? `<div class="tr">${esc(t.tr)}</div>` : ''}
       <div class="frente"><label class="sub" style="display:block;margin:10px 0 4px">¿Qué crees que significa? Escríbelo en español:</label>
         <input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="en español">
         <div class="acciones" style="justify-content:center"><button class="btn" type="button">Enviar</button></div></div>
-      <div class="dorso" hidden><div class="es">${esc(t.es)}</div>${t.nota ? `<div class="sub">${esc(t.nota)}</div>` : ''}<div class="marca-res"></div>
+      <div class="dorso" hidden>${t.img ? `<img data-mat="${esc(t.img)}" alt="">` : ''}<div class="es">${esc(t.es)}</div>${t.nota ? `<div class="sub">${esc(t.nota)}</div>` : ''}<div class="marca-res"></div>
         <div class="acciones" style="justify-content:center"><button class="btn" type="button">${k + 1 < c.tarjetas.length ? 'Siguiente tarjeta →' : 'Terminar'}</button></div></div></div>`);
     f.querySelector('.ru').append(' ', botonVoz(t.ru));
     const inp = f.querySelector('.frente input'), [bE, bS] = f.querySelectorAll('.acciones .btn');
     const enviar = () => {
       res[k] = traduccionOk(inp.value, t.es);
       f.querySelector('.frente').remove(); f.querySelector('.dorso').hidden = false;      // lo escrito desaparece: no se muestra ni se penaliza
+      resolverImgs(f);                                                            // la imagen solo se ve con la respuesta: no delata la palabra
       if (res[k]) { f.classList.add('ok'); f.querySelector('.marca-res').textContent = '✓ ¡Lo adivinaste!'; }
       bS.focus();
     };
