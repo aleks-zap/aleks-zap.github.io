@@ -1,0 +1,53 @@
+# Revisión diaria de los videos de YouTube enlazados en la plataforma (gratis: repositorio público).
+# Si alguno fue borrado, pasó a privado o ya no permite insertarse en otras páginas:
+#  · deja un aviso en Panel docente → Reportes (función aviso_video, SQL 21)
+#  · la ejecución falla y GitHub te envía un correo; si todo está bien, no llega nada.
+# No usa secretos: solo la clave publicable (la misma de config.js).
+name: Revisar videos de YouTube
+on:
+  schedule:
+    - cron: '0 8 * * *'        # todos los días 03:00 en Ecuador (GitHub puede retrasarlo unos minutos)
+  workflow_dispatch: {}         # también se puede ejecutar a mano: Actions → Revisar videos de YouTube → Run workflow
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Revisar enlaces
+        env:
+          SUPABASE_URL: https://tuntcevtgpzaucvxvlzd.supabase.co
+          SUPABASE_KEY: sb_publishable_J7MbunuyfPi4snFEIg7nvQ_UfEtW3nl
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.request, urllib.parse, urllib.error
+          req = urllib.request.Request(os.environ['SUPABASE_URL'] + '/rest/v1/rpc/videos_youtube', data=b'{}', method='POST',
+              headers={'apikey': os.environ['SUPABASE_KEY'], 'Authorization': 'Bearer ' + os.environ['SUPABASE_KEY'], 'Content-Type': 'application/json'})
+          videos = json.load(urllib.request.urlopen(req, timeout=30))
+          malos, dudas = [], []
+          for v in videos:
+              url = 'https://www.youtube.com/oembed?format=json&url=' + urllib.parse.quote(v['fuente'], safe='')
+              for intento in range(3):
+                  try:
+                      urllib.request.urlopen(url, timeout=20); estado = 'ok'; break
+                  except urllib.error.HTTPError as e:
+                      if e.code == 401: estado = 'no permite insertarse en otras páginas'; break
+                      if e.code in (400, 403, 404): estado = 'borrado, privado o enlace inválido'; break
+                      estado = f'YouTube respondió {e.code}'
+                  except Exception as e:
+                      estado = f'sin respuesta ({e.__class__.__name__})'
+                  time.sleep(5)
+              fila = f"| {v['id']} | {v['titulo']} | {v['fuente']} | {estado} |"
+              if estado == 'ok': continue
+              (dudas if estado.startswith(('YouTube respondió', 'sin respuesta')) else malos).append(fila)
+              if not estado.startswith(('YouTube respondió', 'sin respuesta')):
+                  av = urllib.request.Request(os.environ['SUPABASE_URL'] + '/rest/v1/rpc/aviso_video', method='POST',
+                      data=json.dumps({'p_id': v['id'], 'p_problema': estado}).encode(), headers=req.headers)
+                  urllib.request.urlopen(av, timeout=30)
+          resumen = [f'### Videos de YouTube: {len(videos)} revisados, {len(malos)} con problema', '']
+          if malos or dudas:
+              resumen += ['| Material | Título | Enlace | Problema |', '|---|---|---|---|'] + malos + dudas
+          else:
+              resumen.append('Todos siguen disponibles. ✓')
+          open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write('\n'.join(resumen) + '\n')
+          print('\n'.join(resumen))
+          if malos: raise SystemExit(1)       # falla → GitHub envía el correo de aviso
+          PY
