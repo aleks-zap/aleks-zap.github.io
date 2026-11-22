@@ -507,9 +507,9 @@ function distancia(a, b) {
   for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
   return d[a.length][b.length];
 }
-function traduccionOk(resp, es) {
+function traduccionOk(resp, es, acepta = []) {     // acepta: otras respuestas correctas que no se muestran
   const r = sinArticulo(resp); if (!r) return false;
-  const opciones = String(es || '').split(/[,;/()]|\s+o\s+/).map(sinArticulo).filter(Boolean);
+  const opciones = [String(es || ''), ...(acepta || [])].join(',').split(/[,;/()]|\s+o\s+/).map(sinArticulo).filter(Boolean);
   return opciones.some(o => o === r || distancia(o, r) <= (o.length >= 8 ? 2 : o.length >= 4 ? 1 : 0)
     || (r.length >= 4 && (` ${o} `).includes(` ${r} `)));
 }
@@ -531,7 +531,7 @@ function rDescubrir(c) {
     f.querySelector('.ru').append(' ', botonVoz(t.ru));
     const inp = f.querySelector('.frente input'), [bE, bS] = f.querySelectorAll('.acciones .btn');
     const enviar = () => {
-      res[k] = traduccionOk(inp.value, t.es);
+      res[k] = traduccionOk(inp.value, t.es, t.acepta);
       f.querySelector('.frente').remove(); f.querySelector('.dorso').hidden = false;      // lo escrito desaparece: no se muestra ni se penaliza
       resolverImgs(f);                                                            // la imagen solo se ve con la respuesta: no delata la palabra
       if (res[k]) { f.classList.add('ok'); f.querySelector('.marca-res').textContent = '✓ ¡Lo adivinaste!'; }
@@ -1813,7 +1813,7 @@ function editarFila(tabla, fila, campos, alGuardar, extra) {
 const NOM_CAMPO = { items: 'Pregunta', q: 'enunciado', options: 'opciones (una por línea)', answers: 'respuestas aceptadas (una por línea)', answer: 'respuesta correcta',
   pairs: 'parejas (izquierda | derecha, una por línea)', tarjetas: 'Tarjeta', ru: 'ruso', es: 'español', tr: 'transcripción', nota: 'nota', elementos: 'elementos (uno por línea)',
   textos: 'textos (uno por línea)', criterios: 'criterios para la corrección con IA', modelo: 'ejemplo de respuesta', tiles: 'fichas (una por línea)', preguntas: 'preguntas (una por línea)',
-  texto: 'texto', categorias: 'categoría', respuestas: 'respuestas' };
+  texto: 'texto', categorias: 'categoría', respuestas: 'respuestas', acepta: 'otras traducciones aceptadas (una por línea; no se muestran al alumno)' };
 const NO_EDITAR = new Set(['tipo', 'img', 'imagen', 'grupo', 'fuente', 'temas', 'banco', 'n', 'id', 'ref']);
 function camposContenido(c) {
   const out = [];
