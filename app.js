@@ -965,23 +965,22 @@ async function vEscenario(id) {
     for (const x of textos) t.append(await bloqueMaterial(x));
     $app.append(t);
   }
-  // reglas que se presentan por primera vez en esta lección
+  // reglas: cada una aparece en la lista justo antes del primer ejercicio que la necesita (como la ve el alumno)
   const vistas = new Set();
   for (const s of m.esc) { if (s.id === id) break; for (const x of (pan.porLeccion.get(s.id)?.orden || [])) x.reqReglas.forEach(g => vistas.add(g)); }
-  const nuevas = [...new Set(r.orden.flatMap(x => x.reqReglas))].filter(g => !vistas.has(g));
-  if (nuevas.length) {
-    const todas = new Map((reglasCache || await api.reglas()).map(g => [g.id, g]));
-    const t = h(`<details class="tarjeta"><summary>Reglas que se presentan en esta lección (${nuevas.length})</summary><div class="lista"></div></details>`);
-    for (const g of nuevas.map(x => todas.get(x)).filter(Boolean)) {
-      const f = h(`<div class="fila"><div class="txt"><b>${esc(g.nombre)}</b><small>${esc(g.id)}</small></div><button class="btn sec" type="button">✏️ Editar</button></div>`);
-      f.querySelector('button').onclick = () => editarRegla(g, () => vEscenario(id));
-      t.querySelector('.lista').append(f);
-    }
-    $app.append(t);
-  }
+  const todas = new Map((reglasCache || await api.reglas()).map(g => [g.id, g]));
   $app.append(h(`<h2>Ejercicios de la lección</h2>`));
-  $app.append(h(`<p class="sub">Orden para un alumno que empieza de cero. Puedes cambiarlo: arrastra los ejercicios o usa las flechas. Antes de cada ejercicio se siguen presentando las reglas y palabras nuevas que necesita.</p>`));
-  const lista = h(`<div class="lista">${r.orden.map(fila).join('')}</div>`);
+  $app.append(h(`<p class="sub">Orden para un alumno que empieza de cero: 📘 son las tarjetas de reglas nuevas, en el momento en que aparecen. Puedes cambiar el orden de los ejercicios (arrastrar o flechas); las reglas siempre se presentan antes del primer ejercicio que las necesita.</p>`));
+  const lista = h(`<div class="lista"></div>`);
+  r.orden.forEach((x, i) => {
+    for (const g of x.reqReglas.filter(g => !vistas.has(g))) {
+      vistas.add(g); const rg = todas.get(g) || { id: g, nombre: g };
+      const f = h(`<div class="fila fila-regla"><div class="num">📘</div><div class="txt"><b>${esc(rg.nombre)}</b><small>Regla nueva · ${esc(rg.id)}</small></div><button class="btn sec" type="button">Ver / editar</button></div>`);
+      f.querySelector('button').onclick = () => editarRegla(rg, () => vEscenario(id));
+      lista.append(f);
+    }
+    lista.append(h(fila(x, i)));
+  });
   const bOrd = h(`<button class="btn sec" type="button">↕ Cambiar orden</button>`);
   bOrd.onclick = () => ordenarLeccion(lista, r.orden, () => vEscenario(id), bOrd);
   $app.append(bOrd, lista);
