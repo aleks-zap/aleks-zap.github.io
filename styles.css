@@ -216,3 +216,5 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .grande-desc input{width:100%;text-align:center}
 .grande-desc .dorso .es{font-size:24px}
 .insignia{display:inline-block;min-width:18px;padding:0 6px;border-radius:99px;background:var(--acento);color:#fff;font-size:12px;font-weight:700;text-align:center;line-height:18px}
+.fila-regla{background:#fffaf0;border-color:#efdfb8}
+.fila-regla .num{background:#fbecc8}
