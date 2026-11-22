@@ -166,7 +166,7 @@ async function crearDemo() {
     async sesion() { return new URLSearchParams(location.search).get('demo') === 'publico' ? null : { user: { id: 'demo', email: 'demo@demo' } }; },
     async login() {}, async logout() {},
     async registro() { return { session: null }; }, async misAceptaciones() { return new URLSearchParams(location.search).get('terminos') === '0' && !sessionStorage.getItem('demo_acepto') ? [] : [{ documento: 'cuenta', version: TERMINOS_CUENTA }]; }, async aceptar() { sessionStorage.setItem('demo_acepto', '1'); }, async recuperar() {}, async nuevaClave() {}, async cambiarNombre() {}, async cambiarCorreo() {}, async cambiarClave(a) { if (a !== 'demo1234') throw new Error('La contraseña actual no es correcta.'); },
-    async reportar(o) { console.log('reporte', o); }, async reportes() { return []; }, async resolverReporte() {},
+    async reportar(o) { console.log('reporte', o); }, async reportes() { return new URLSearchParams(location.search).has('rep') ? [{ id: 1, usuario: null, pagina: 'video:M461', texto: '🎬 Video de YouTube no disponible: M461 — borrado, privado o enlace inválido.', navegador: 'revisión automática diaria', estado: 'nuevo', creado_en: new Date().toISOString() }] : []; }, async resolverReporte() {},
     async evaluarPronunciacion() { return { total: 82, exactitud: 85, fluidez: 78, completitud: 100, palabras: [{ palabra: 'привет', nota: 92, error: 'None' }, { palabra: 'меня', nota: 64, error: 'Mispronunciation' }, { palabra: 'зовут', nota: 88, error: 'None' }] }; },
     async generarRepaso(d0) { return { enunciado: 'Responde las preguntas con frases completas.', items: [{ pregunta: 'Какой у тебя дом?', palabras: d0.palabras.slice(0, 2).map(p => p.lema), reglas: d0.reglas.map(g => g.nombre) }, { pregunta: 'Ты работаешь?', palabras: d0.palabras.slice(2).map(p => p.lema) }] }; },
     async ajustes() { return [{ clave: 'ia_activa', valor: new URLSearchParams(location.search).has('ia') }, { clave: 'pronunciacion_activa', valor: new URLSearchParams(location.search).has('pron') }, { clave: 'ia_tope_mensual_usd', valor: 5 }]; },
@@ -607,8 +607,17 @@ function nav(activa) {
   if (perfil?.rol === 'docente') links.push(['#/docente', 'Panel docente', 'docente']);
   $nav.innerHTML = links.map(([u, t, k]) => `<a href="${u}" class="${k === activa ? 'activo' : ''}">${t}</a>`).join('') +
     `<a class="chip" href="#/cuenta" title="Mi cuenta">👤 ${esc(perfil?.nombre || sesion.user.email)}</a>` + (DEMO ? '<span class="chip pend">demo</span>' : '<a href="#/salir">Salir</a>');
+  if (perfil?.rol === 'docente') reportesNuevos().then(n => {     // aviso de reportes sin resolver (problemas de alumnos, videos caídos)
+    const a = $nav.querySelector('a[href="#/docente"]');
+    if (a && n && !a.querySelector('.insignia')) a.insertAdjacentHTML('beforeend', ` <span class="insignia" title="Reportes sin resolver">${n}</span>`);
+  });
 }
 
+let cacheReportes = null;
+async function reportesNuevos(forzar = false) {
+  if (!forzar && cacheReportes && Date.now() - cacheReportes.t < 5 * 60e3) return cacheReportes.n;
+  try { const n = (await api.reportes()).filter(r => r.estado === 'nuevo').length; cacheReportes = { n, t: Date.now() }; return n; } catch { return 0; }
+}
 function vLogin(msg = '') {
   nav();
   $app.innerHTML = '';
@@ -1383,6 +1392,7 @@ async function vDocente(tab = 'alumnos') {
   });
   $app.append(pes);
   const cuerpo = h(`<div></div>`); $app.append(cuerpo);
+  reportesNuevos(tab === 'reportes').then(n => { const b = [...pes.children].find(x => x.textContent === 'Reportes'); if (b && n) b.textContent = `Reportes (${n} sin resolver)`; });
   if (tab !== 'ajustes') avisoEspacio(pes.parentNode.insertBefore(h(`<div></div>`), pes.nextSibling));
   if (tab === 'contenido') return tContenido(cuerpo);
   if (tab === 'revisar') return tRevisar(cuerpo);
@@ -2206,7 +2216,7 @@ async function tReportes(el) {
   for (const r of rs) {
     const c = h(`<div class="tarjeta ${r.estado === 'resuelto' ? 'hecho' : ''}"><div class="etq">${esc(nombre(r.usuario))} · ${new Date(r.creado_en).toLocaleString()} · ${esc(r.pagina || '')} · ${r.estado === 'resuelto' ? '✓ resuelto' : '🆕 nuevo'}</div>
       <p style="white-space:pre-wrap">${esc(r.texto)}</p><p class="sub">${esc(r.navegador || '')}</p>${r.estado === 'resuelto' ? '' : '<div class="acciones"><button class="btn sec" type="button">Marcar resuelto</button></div>'}</div>`);
-    const b = c.querySelector('button'); if (b) b.onclick = async () => { await api.resolverReporte(r.id); c.classList.add('hecho'); b.remove(); };
+    const b = c.querySelector('button'); if (b) b.onclick = async () => { await api.resolverReporte(r.id); c.classList.add('hecho'); b.remove(); cacheReportes = null; };
     el.append(c);
   }
 }
