@@ -544,14 +544,47 @@ function rDescubrir(c) {
   mostrar(0);
   return r;
 }
-// Seguir el trazo: el alumno repasa con el dedo o el mouse una letra cursiva (fuente Bad Script)
-function rTrazo(c) {
-  const el = h(`<div class="trazos"></div>`); const W = 300, H = 190, FUENTE = '130px "Bad Script"';
-  const lienzos = c.elementos.map(txt => {
+// Seguir el trazo: el alumno repasa con el dedo o el mouse una letra cursiva.
+// Modelo: imágenes PNG propias (Panel docente → Subir audios e imágenes, nombres «cursiva-<letra>-mayuscula.png» /
+// «cursiva-<letra>-minuscula.png»); si falta alguna, se usa la fuente Bad Script incluida en la plataforma.
+const TRANSLIT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'ye', ё: 'yo', ж: 'zh', з: 'z', и: 'i', й: 'i-kratkaya', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p',
+  р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'j', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'shch', ъ: 'signo-duro', ы: 'y', ь: 'signo-blando', э: 'e', ю: 'yu', я: 'ya' };
+const archivoCursiva = ch => `img/cursiva-${TRANSLIT[ch.toLowerCase()]}-${ch === ch.toLowerCase() ? 'minuscula' : 'mayuscula'}.png`;
+let fuenteCursiva = null;
+const cargarFuenteCursiva = () => fuenteCursiva ||= (async () => {
+  try { const f = new FontFace('CursivaPlataforma', 'url(bad-script-cyrillic.woff2)'); await f.load(); document.fonts.add(f); } catch { /* sin fuente: se usa la del navegador */ }
+})();
+async function imagenCursiva(ch) {
+  if (!TRANSLIT[ch.toLowerCase()]) return null;
+  const u = await api.url('materiales', archivoCursiva(ch)).catch(() => null); if (!u) return null;
+  return new Promise(res => { const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => res(im); im.onerror = () => res(null); im.src = u; });
+}
+async function rTrazo(c) {
+  const W = 300, H = 190;
+  const el = h(`<div class="trazos"><p class="cargando">Cargando letras…</p></div>`);
+  await cargarFuenteCursiva();
+  // máscara del modelo (negro sobre transparente), igual para imágenes y fuente
+  const modelos = await Promise.all(c.elementos.map(async txt => {
+    const o = document.createElement('canvas'); o.width = W; o.height = H; const x = o.getContext('2d');
+    const imgs = await Promise.all([...txt].map(imagenCursiva));
+    if (imgs.every(Boolean)) {
+      const sep = 14, alto = Math.max(...imgs.map(im => im.naturalHeight)), ancho = imgs.reduce((s, im) => s + im.naturalWidth, 0) + sep * (imgs.length - 1);
+      const k = Math.min((W - 24) / ancho, (H - 20) / alto); let px = (W - ancho * k) / 2; const py = (H - alto * k) / 2;
+      for (const im of imgs) { x.drawImage(im, px, py, im.naturalWidth * k, im.naturalHeight * k); px += (im.naturalWidth + sep) * k; }   // misma altura de archivo = misma línea base
+    } else {
+      x.font = '130px CursivaPlataforma, "Bad Script", cursive'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(txt, W / 2, H / 2 + 5);
+    }
+    return o;
+  }));
+  el.innerHTML = '';
+  const lienzos = c.elementos.map((txt, n) => {
+    const mod = modelos[n];
+    const gris = document.createElement('canvas'); gris.width = W; gris.height = H;
+    const gx = gris.getContext('2d'); for (let a = 0; a < 8; a++) gx.drawImage(mod, Math.cos(a * Math.PI / 4) * 2.5, Math.sin(a * Math.PI / 4) * 2.5); gx.drawImage(mod, 0, 0);   /* guía un poco más gruesa que el trazo del modelo */ gx.globalCompositeOperation = 'source-in'; gx.fillStyle = '#d9d2c4'; gx.fillRect(0, 0, W, H);
     const f = h(`<div class="trazo"><canvas width="${W}" height="${H}"></canvas><div class="acciones" style="margin-top:6px"><button class="btn sec" type="button">Borrar</button><span class="marca-res"></span></div></div>`);
     const cv = f.querySelector('canvas'), cx = cv.getContext('2d'); let trazos = [], act = null;
     const dibujar = () => {
-      cx.clearRect(0, 0, W, H); cx.font = FUENTE; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillStyle = '#d9d2c4'; cx.fillText(txt, W / 2, H / 2 + 5);
+      cx.clearRect(0, 0, W, H); cx.drawImage(gris, 0, 0);
       cx.strokeStyle = '#2f5d8a'; cx.lineWidth = 9; cx.lineCap = cx.lineJoin = 'round';
       for (const t of trazos) { cx.beginPath(); t.forEach(([x, y], k) => k ? cx.lineTo(x, y) : cx.moveTo(x, y)); if (t.length === 1) cx.lineTo(t[0][0] + .1, t[0][1]); cx.stroke(); }
     };
@@ -560,16 +593,18 @@ function rTrazo(c) {
     cv.onpointermove = e => { if (act) { act.push(pos(e)); dibujar(); } };
     cv.onpointerup = cv.onpointercancel = () => { act = null; };
     f.querySelector('button').onclick = () => { trazos = []; f.querySelector('.marca-res').textContent = ''; f.classList.remove('ok', 'mal'); dibujar(); };
-    document.fonts.load(FUENTE).then(dibujar, dibujar); dibujar();
+    dibujar();
     el.append(f);
-    // evaluación: cuánto del modelo cubrió el trazo y cuánto del trazo cae sobre el modelo
-    const evaluar = () => {
-      const mk = () => { const o = document.createElement('canvas'); o.width = W; o.height = H; const x = o.getContext('2d'); x.font = FUENTE; x.textAlign = 'center'; x.textBaseline = 'middle'; return [o, x]; };
+    // evaluación: cuánto del modelo cubrió el trazo y cuánto del trazo cae sobre el modelo (con un margen de 11 px)
+    const evaluar = () => { try { return evaluar0(); } catch { f.classList.add('ok'); f.querySelector('.marca-res').textContent = '✓'; return true; } };   // si el navegador no deja leer la imagen, no se penaliza
+    const evaluar0 = () => {
+      const mk = () => { const o = document.createElement('canvas'); o.width = W; o.height = H; return o.getContext('2d'); };
       const pinta = (x, ancho) => { x.lineWidth = ancho; x.lineCap = x.lineJoin = 'round'; x.strokeStyle = '#000'; for (const t of trazos) { x.beginPath(); t.forEach(([a, b], k) => k ? x.lineTo(a, b) : x.moveTo(a, b)); if (t.length === 1) x.lineTo(t[0][0] + .1, t[0][1]); x.stroke(); } };
-      const [, mod] = mk(); mod.fillText(txt, W / 2, H / 2 + 5);
-      const [, banda] = mk(); banda.lineWidth = 22; banda.lineJoin = 'round'; banda.strokeText(txt, W / 2, H / 2 + 5); banda.fillText(txt, W / 2, H / 2 + 5);
-      const [, usu] = mk(); pinta(usu, 9); const [, usuAncho] = mk(); pinta(usuAncho, 28);
-      const A = mod.getImageData(0, 0, W, H).data, B = banda.getImageData(0, 0, W, H).data, U = usu.getImageData(0, 0, W, H).data, UA = usuAncho.getImageData(0, 0, W, H).data;
+      const banda = mk();
+      for (let a = 0; a < 16; a++) for (const r of [5.5, 11]) banda.drawImage(mod, Math.cos(a * Math.PI / 8) * r, Math.sin(a * Math.PI / 8) * r);
+      banda.drawImage(mod, 0, 0);
+      const usu = mk(); pinta(usu, 9); const usuAncho = mk(); pinta(usuAncho, 28);
+      const A = mod.getContext('2d').getImageData(0, 0, W, H).data, B = banda.getImageData(0, 0, W, H).data, U = usu.getImageData(0, 0, W, H).data, UA = usuAncho.getImageData(0, 0, W, H).data;
       let m = 0, cub = 0, u = 0, dentro = 0;
       for (let i = 3; i < A.length; i += 4) { if (A[i] > 100) { m++; if (UA[i] > 100) cub++; } if (U[i] > 100) { u++; if (B[i] > 100) dentro++; } }
       const cobertura = m ? cub / m : 0, precision = u ? dentro / u : 0, ok = cobertura >= 0.7 && precision >= 0.75;
