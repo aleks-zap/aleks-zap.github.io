@@ -174,7 +174,7 @@ async function crearDemo() {
     async transcribirClase() { await new Promise(r => setTimeout(r, 800)); const fr = (sp, t) => t.split(' ').flatMap((w, i) => [...(i ? [{ text: ' ', type: 'spacing', speaker_id: sp }] : []), { text: w, type: 'word', speaker_id: sp }]);
       const ws = [['speaker_0', 'Привет! Как дела? Расскажи, что ты делал в выходные?'], ['speaker_1', 'Привет! Хорошо. В субботу я был дома, я читал книгу.'], ['speaker_0', 'Очень хорошо. А где ты живёшь?'], ['speaker_1', 'Я живу в Куэнка. Мой дом большой, есть кухня и две комнаты.'], ['speaker_0', 'Отлично. Bueno, ahora vamos a practicar.'], ['speaker_1', 'Sí. Я люблю пить кофе утром.']].flatMap(([s, t], i) => [...(i ? [{ text: '\n', type: 'spacing', speaker_id: s }] : []), ...fr(s, t)]);
       return { audio_duration_secs: 1800, words: ws }; },
-    async corregirIA() { const u = intentos[intentos.length - 1]; return { puntaje: 100, feedback: '¡Muy bien! Sin errores.', errores: [], objetivos: (u?.respuesta?.objetivos || []).slice(0, 3).map(o => ({ id: o.id, ok: true })) }; },
+    async corregirIA() { const u = intentos[intentos.length - 1]; return { puntaje: 85, feedback: `✓ Consigna cumplida.\nErrores (1):\n• Ejemplo de error agrupado: мама → маму.${d.gramatica?.[0] ? ` [[${d.gramatica[0].id}]]` : ''}`, errores: [], objetivos: (u?.respuesta?.objetivos || []).slice(0, 3).map(o => ({ id: o.id, ok: true })) }; },
     async examenes() { return JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); },
     async crearExamen(o) { const l = JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); const x = { id: Date.now(), estado: 'en_curso', incidencias: [], iniciado_en: new Date().toISOString(), ...o }; l.unshift(x); sessionStorage.setItem('demo_examenes', JSON.stringify(l)); return x; },
     async actualizarExamen(id, o) { const l = JSON.parse(sessionStorage.getItem('demo_examenes') || '[]'); const x = l.find(e => e.id === id); Object.assign(x, o); sessionStorage.setItem('demo_examenes', JSON.stringify(l)); },
@@ -900,7 +900,7 @@ async function vInicio() {
   const coment = intentos.filter(i => ['revisado', 'pendiente_docente'].includes(i.estado) && i.feedback && i.ejercicio_id !== EJ_UBICACION).sort((a, b) => new Date(b.creado_en) - new Date(a.creado_en)).slice(0, 3);
   if (coment.length) {
     const c = h(`<div class="tarjeta"><h2 style="margin-top:0">Comentarios sobre tus tareas</h2></div>`);
-    coment.forEach(i => c.append(h(`<div class="regla"><b><a href="#/x/${i.ejercicio_id}">Tarea ${esc(i.ejercicio_id)}</a>${i.puntaje != null ? ' · ' + Math.round(i.puntaje) + ' %' : ''}</b>${esc(i.feedback)}</div>`)));
+    coment.forEach(i => c.append(h(`<div class="regla"><b><a href="#/x/${i.ejercicio_id}">Tarea ${esc(i.ejercicio_id)}</a>${i.puntaje != null ? ' · ' + Math.round(i.puntaje) + ' %' : ''}</b><div style="white-space:pre-wrap">${fbHtml(i.feedback)}</div></div>`)));
     $app.append(c);
   }
 }
@@ -1015,8 +1015,8 @@ async function vEjercicio(id) {
           const espera = h(`<div class="resultado pend">Enviado. Revisando tu texto… ⏳</div>`); res.append(espera);
           try {
             const r = await api.corregirIA(guardado.id);
-            espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div></div>`) : h(`<div class="resultado pend">${MSG_IA_PENDIENTE}</div>`));
-            if (r?.feedback) registrarProduccion(out.respuesta.texto, r.errores);
+            espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${fbHtml(r.feedback)}</div></div>`) : h(`<div class="resultado pend">${MSG_IA_PENDIENTE}</div>`));
+            if (r?.feedback) registrarProduccion(out.respuesta.texto, r.errores, new Set(), [ej.titulo, ej.instrucciones, ...(c.preguntas || [])].join(' '));   // las palabras que ya da la consigna no cuentan como producidas
           } catch (e) { espera.textContent = MSG_IA_PENDIENTE; }
         } else res.append(h(`<div class="resultado pend">${out.respuesta?.texto && !ORALES.has(ej.tipo_ejercicio) ? MSG_IA_PENDIENTE : out.audio || out.respuesta?.texto ? 'Enviado. Tu profesora escuchará la grabación.' : 'Práctica registrada.'}</div>`));
       } else {
@@ -1058,18 +1058,30 @@ function repasoEscrito(card, t, ids, m, vocab) {
       const espera = h(`<div class="resultado pend">Enviado. Revisando tu texto… ⏳</div>`); res.append(espera);
       try {
         const r = await api.corregirIA(g.id);
-        espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${esc(r.feedback)}</div></div>`) : h(`<div class="resultado pend">${MSG_IA_PENDIENTE}</div>`));
+        espera.replaceWith(r?.feedback ? h(`<div class="regla ia"><b>Comentarios${r.puntaje != null ? ` · ${r.puntaje} %` : ''}</b><div style="white-space:pre-wrap">${fbHtml(r.feedback)}</div></div>`) : h(`<div class="resultado pend">${MSG_IA_PENDIENTE}</div>`));
         await registrarProduccion(resp.map(x => x.value).join(' '), r?.errores, new Set(ids));
       } catch (e) { espera.textContent = MSG_IA_PENDIENTE; }
       acc.innerHTML = ''; acc.append(h(`<a class="btn" data-flujo href="#/">Siguiente tarea →</a>`));
     } catch (e) { res.append(h(`<p class="error">${esc(e.message || 'No se pudo guardar.')}</p>`)); ev.target.disabled = false; }
   };
 }
+// Comentario de la corrección: «[[G12]]» enlaza a la tarjeta de la regla (se abre encima, sin salir de la tarea)
+const fbHtml = t => esc(t).replace(/\[\[([GP]\d+)\]\]/g, (_, id) => `<a href="#" class="ver-regla" data-regla="${id}">📘 Recordar la regla</a>`);
+document.addEventListener('click', async e => {
+  const a = e.target.closest?.('a.ver-regla'); if (!a) return;
+  e.preventDefault();
+  const r = (reglasCache || (reglasCache = await api.reglas().catch(() => []))).find(g => g.id === a.dataset.regla);
+  if (!r) return;
+  const o = h(`<div class="felicidades"><div class="caja" style="text-align:left;max-width:640px;max-height:88vh;overflow:auto"><div class="regla" style="margin-top:0"><b style="font-size:18px">${esc(r.nombre)}</b>${r.explicacion ? explicacionHtml(r.explicacion) : `<p style="margin:8px 0">${esc(r.descripcion || '')}</p>`}${r.ejemplo ? `<div class="texto-ru">${esc(r.ejemplo)}</div>` : ''}</div><div class="acciones"><button class="btn" type="button">Cerrar</button></div></div></div>`);
+  o.querySelector('button').onclick = () => o.remove(); o.onclick = ev => { if (ev.target === o) o.remove(); };
+  document.body.append(o); resolverImgs(o);
+});
 // Palabras del curso que el alumno escribió en un texto corregido por IA: cuentan como producción para el repaso espaciado
 // (correctas si no aparecen dentro de un error; las palabras objetivo del repaso escrito las evalúa la IA aparte)
-async function registrarProduccion(texto, errores, excluir = new Set()) {
+async function registrarProduccion(texto, errores, excluir = new Set(), dado = '') {
   try {
     const formas = formasCache || await fetch('formas.json').then(r => r.json());
+    if (dado) palabrasEnTexto(formas, dado).forEach(id => excluir.add(id));
     const voc = vocabCache ? new Set(vocabCache.map(v => v.id)) : null;
     const mal = new Set(palabrasEnTexto(formas, (errores || []).map(e => e.original).join(' ')));
     const ids = palabrasEnTexto(formas, texto).filter(id => !excluir.has(id) && (!voc || voc.has(id)));
@@ -1233,7 +1245,7 @@ function fichaUbicacion(m, ints, evs) {
   if (m.nuevasAnteriores?.length) lineas.push(`<p>Reglas anteriores que le resultaron nuevas (${m.nuevasAnteriores.length}): ${esc(m.nuevasAnteriores.map(nombreR).join('; '))}</p>`);
   if (m.respuestaCambio) lineas.push(`<p>Sugerencia de cambio de nivel: <b>${m.respuestaCambio === 'cambio' ? 'pidió cambiarse' : 'prefirió seguir'}</b></p>`);
   if (p?.log?.length) lineas.push(`<table style="margin-top:8px"><tr><th>Lección</th><th>Pregunta</th><th>Respuesta</th><th></th></tr>${p.log.map(x => `<tr><td>${esc(x.leccion)}</td><td>${esc(x.q)}</td><td>${esc(x.respuesta || '')}</td><td>${x.ok ? '✓' : '✗'}</td></tr>`).join('')}</table>`);
-  if (pr?.respuesta?.texto) lineas.push(`<p style="margin-top:10px"><b>Texto «Расскажи о себе»</b></p><div class="texto-ru" style="white-space:pre-wrap">${esc(pr.respuesta.texto)}</div>${pr.feedback ? `<p class="sub" style="white-space:pre-wrap">Revisión de IA (el alumno no la ve):\n${esc(pr.feedback)}</p>` : '<p class="sub">Sin revisión de IA.</p>'}`);
+  if (pr?.respuesta?.texto) lineas.push(`<p style="margin-top:10px"><b>Texto «Расскажи о себе»</b></p><div class="texto-ru" style="white-space:pre-wrap">${esc(pr.respuesta.texto)}</div>${pr.feedback ? `<p class="sub" style="white-space:pre-wrap">Revisión de IA (el alumno no la ve):\n${fbHtml(pr.feedback)}</p>` : '<p class="sub">Sin revisión de IA.</p>'}`);
   c.append(h(`<div>${lineas.join('') || '<p class="sub">Sin detalles.</p>'}</div>`));
   return [c];
 }

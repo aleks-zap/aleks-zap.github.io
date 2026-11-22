@@ -194,7 +194,10 @@ function memoria(m, hasta = Infinity) {
     if (i.puntaje != null) for (const g of e.reqG) evs.push({ id: g, t, ok: Number(i.puntaje) >= APROBADO, prod: true });
     const perm = new Set([...e.reqV, ...(e.ensena || [])]);
     for (const d of i.respuesta?.detalle || []) {
-      for (const id of idsEnTexto(m, d.c, perm)) evs.push({ id, t, ok: !!d.ok, prod: !!d.p });
+      // palabra que ya venía dada en la pregunta (p. ej. el infinitivo para conjugar): no cuenta como producción de vocabulario,
+      // solo la regla (que se registra con el puntaje del ejercicio)
+      const dadas = d.p ? new Set(idsEnTexto(m, d.q, perm)) : null;
+      for (const id of idsEnTexto(m, d.c, perm)) if (!dadas?.has(id)) evs.push({ id, t, ok: !!d.ok, prod: !!d.p });
       for (const id of idsEnTexto(m, d.q, perm)) evs.push({ id, t, ok: !!d.ok, prod: false, enunciado: true });
     }
   }
