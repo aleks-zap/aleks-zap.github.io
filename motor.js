@@ -78,7 +78,7 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
     return alf.slice(0, k + 1);
   };
   for (const e of ejs) {
-    if (alf.includes(e.id)) { e.reqReglas = []; continue; }        // las letras se presentan sin reglas previas
+    if (alf.includes(e.id) || contenidoDe(e).tipo === 'letra') { e.reqReglas = []; continue; }        // las letras se presentan sin reglas previas
     const extra = e.reqReglas.flatMap(gruposRegla);
     if (extra.length) e.reqEj = [...new Set([...e.reqEj, ...extra])];
   }
@@ -158,7 +158,7 @@ function idsEnTexto(ctx, texto, permitidos) {
   return out;
 }
 export const palabrasEnTexto = (formas, texto) => [...new Set(idsEnTexto({ formas }, texto, null))];
-const AUTOCORREGIBLE = new Set(['items', 'match', 'order', 'clasificar', 'conjunto', 'descubrir', 'trazo']);
+const AUTOCORREGIBLE = new Set(['items', 'match', 'order', 'clasificar', 'conjunto', 'descubrir', 'trazo', 'letra']);
 function contenidoDe(e) { try { return typeof e.contenido === 'string' ? JSON.parse(e.contenido) : (e.contenido || {}); } catch { return {}; } }
 // palabras que un ejercicio hace practicar: focoV (reconocer o producir) y focoP (producir escribiendo)
 function focoEjercicio(ctx, e) {

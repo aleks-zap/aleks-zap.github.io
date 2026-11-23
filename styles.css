@@ -218,3 +218,11 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .insignia{display:inline-block;min-width:18px;padding:0 6px;border-radius:99px;background:var(--acento);color:#fff;font-size:12px;font-weight:700;text-align:center;line-height:18px}
 .fila-regla{background:#fffaf0;border-color:#efdfb8}
 .fila-regla .num{background:#fbecc8}
+/* letra nueva */
+.letra-grande{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:28px;padding:14px;background:#fff;border:1px solid var(--linea);border-radius:14px}
+.letra-grande .impresa{font-size:84px;font-weight:600;line-height:1}
+.letra-grande .cursiva-imgs{display:flex;align-items:flex-end;gap:10px}
+.letra-grande .cur-img{height:110px;width:auto}
+.letra-grande .cur-fuente{font:96px "CursivaPlataforma","Bad Script",cursive;line-height:1}
+.notas-letra{margin:12px 0 0;padding-left:1.2em}.notas-letra li{margin:.35em 0}
+.anim-letra{display:block;max-width:100%;width:420px;margin:12px auto 0;border-radius:12px;border:1px solid var(--linea);background:#fff}

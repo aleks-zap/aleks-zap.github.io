@@ -566,8 +566,10 @@ async function rTrazo(c) {
   // máscara del modelo (negro sobre transparente), igual para imágenes y fuente
   const modelos = await Promise.all(c.elementos.map(async txt => {
     const o = document.createElement('canvas'); o.width = W; o.height = H; const x = o.getContext('2d');
-    const imgs = await Promise.all([...txt].map(imagenCursiva));
-    if (imgs.every(Boolean)) {
+    const imgs = c.modelo === 'impresa' ? [null] : await Promise.all([...txt].map(imagenCursiva));
+    if (c.modelo === 'impresa') {
+      x.font = '600 120px "Golos Text", Arial, Helvetica, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.letterSpacing = '18px'; x.fillText(txt, W / 2, H / 2 + 4);
+    } else if (imgs.every(Boolean)) {
       const sep = 14, alto = Math.max(...imgs.map(im => im.naturalHeight)), ancho = imgs.reduce((s, im) => s + im.naturalWidth, 0) + sep * (imgs.length - 1);
       const k = Math.min((W - 24) / ancho, (H - 20) / alto); let px = (W - ancho * k) / 2; const py = (H - alto * k) / 2;
       for (const im of imgs) { x.drawImage(im, px, py, im.naturalWidth * k, im.naturalHeight * k); px += (im.naturalWidth + sep) * k; }   // misma altura de archivo = misma línea base
@@ -620,6 +622,28 @@ async function rTrazo(c) {
   } };
 }
 
+// Letra nueva: la letra impresa y cursiva, su audio (material del ejercicio), notas de escritura y pronunciación,
+// animación opcional y trazo de la forma impresa y de la cursiva
+async function rLetra(c) {
+  const el = h(`<div class="letra-nueva"><div class="letra-grande"><span class="impresa">${esc(c.letra)}${c.minuscula && c.minuscula !== c.letra ? ' ' + esc(c.minuscula) : ''}</span><span class="cursiva-imgs"></span></div>
+    ${(c.notas || []).length ? `<ul class="notas-letra">${c.notas.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+    ${c.animacion ? `<img class="anim-letra" alt="Animación" data-anim="${esc(c.animacion)}">` : ''}</div>`);
+  const ci = el.querySelector('.cursiva-imgs');
+  await cargarFuenteCursiva();
+  for (const ch of (c.cursiva || []).join('')) {
+    const im = await imagenCursiva(ch);
+    if (im) { im.className = 'cur-img'; ci.append(im); } else ci.append(h(`<span class="cur-fuente">${esc(ch)}</span>`));
+  }
+  if (c.animacion) api.url('materiales', `img/${c.animacion}`).then(u => { const a = el.querySelector('.anim-letra'); if (u) a.src = u; else a.remove(); });
+  const partes = [];
+  if ((c.impresa || []).length) { el.append(h(`<p class="instr" style="margin-top:14px">Traza la letra impresa</p>`)); const t = await rTrazo({ elementos: c.impresa, modelo: 'impresa' }); el.append(t.el); partes.push(t); }
+  if ((c.cursiva || []).length) { el.append(h(`<p class="instr" style="margin-top:14px">Traza la letra cursiva</p>`)); const t = await rTrazo({ elementos: c.cursiva }); el.append(t.el); partes.push(t); }
+  return { el, corregir() {
+    const out = partes.map(t => t.corregir()), det = out.flatMap(o => o.detalle);
+    return { total: det.length || 1, bien: det.length ? det.filter(d => d.ok).length : 1, respuesta: det.map(d => d.ok), detalle: det };
+  } };
+}
+
 async function renderizar(ej) {
   const c = typeof ej.contenido === 'string' ? JSON.parse(ej.contenido) : ej.contenido;
   switch (c.tipo) {
@@ -631,6 +655,7 @@ async function renderizar(ej) {
     case 'abierta': return rAbierta(c, ej);
     case 'descubrir': return rDescubrir(c);
     case 'trazo': return rTrazo(c);
+    case 'letra': return rLetra(c);
     default: return rItems(c);
   }
 }
@@ -1945,7 +1970,7 @@ async function tContenido(el) {
     <input type="file" accept=".xlsx" id="fx"> <button class="btn" id="bx" type="button">Importar</button></div>`));
   el.append(h(`<div class="tarjeta"><h2 style="margin-top:0">Subir audios e imágenes</h2>
     <p class="sub">Selecciona todos los archivos de las carpetas <b>audio</b>, <b>img</b> y <b>video</b> (nombres tipo M003.mp3, M004.jpg, M455.mp4). Se guardan en Supabase y los alumnos los ven sin cuenta de Google.</p>
-    <input type="file" multiple accept=".mp3,.jpg,.jpeg,.png,.webp,.mp4" id="fm"> <button class="btn" id="bm" type="button">Subir</button></div>`));
+    <input type="file" multiple accept=".mp3,.jpg,.jpeg,.png,.webp,.gif,.mp4" id="fm"> <button class="btn" id="bm" type="button">Subir</button></div>`));
   const log = h(`<div class="log" hidden></div>`); el.append(log);
   const out = s => { log.hidden = false; log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
   el.querySelector('#bd').onclick = async e => { e.target.disabled = true; try { await descargarContenido(out); } catch (er) { out('✗ ' + er.message); } e.target.disabled = false; };
