@@ -3,7 +3,7 @@ import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, r
 let vocabCache = null, formasCache = null;
 let reglasCache = null;
 
-const VERSION_APP = '2026-11-23';   // cambia junto con version.json en cada publicación
+const VERSION_APP = '2026-11-23c';   // cambia junto con version.json en cada publicación
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $app = document.getElementById('app');
 const $nav = document.getElementById('nav');
@@ -788,11 +788,12 @@ function bienvenida(seguir) {
       <li><b>Repaso del día.</b> La plataforma te devuelve las palabras justo cuando empiezas a olvidarlas. Hazlo antes del material nuevo.</li>
       <li><b>Tus errores no se castigan:</b> sirven para saber qué repasar.</li>
       ${zoom ? '<li><b>Clase por Zoom.</b> Las tareas orales (hablar, presentarte, describir) se guardan para tu clase semanal con la profesora.</li>' : ''}
-      ${prueba ? '<li><b>Prueba gratis:</b> tienes la primera lección completa: «Primeras palabras» (el alfabeto). Al terminarla podrás elegir un plan.</li>' : ''}
+      ${prueba ? '<li><b>Prueba gratis:</b> tienes la primera lección completa: «Primeras palabras» (tus primeras letras y palabras). Al terminarla podrás elegir un plan.</li>' : ''}
     </ol>
     <h3>Tus primeras lecciones</h3>
     <ul>
-      <li><b>Primeras palabras:</b> el alfabeto (А, О, К, М, Т…), cómo suena cada letra, la letra cursiva y tus primeras palabras parecidas al español.</li>
+      <li><b>Primeras palabras:</b> las primeras letras (А, М, О, К, С, Т…), cómo suena cada una, la letra cursiva, tus primeras palabras parecidas al español y cómo decir «esto es…» (это).</li>
+      <li><b>Curso fonético:</b> el resto del alfabeto, con sus sonidos, su cursiva y las reglas de pronunciación.</li>
       <li><b>«Привет! Как тебя зовут?»:</b> saludar, presentarte, preguntar «¿cómo te llamas?» y videos cortos de clase.</li>
     </ul>
     <h3>Antes de empezar (2 minutos)</h3>
@@ -856,7 +857,7 @@ async function vInicio() {
   const rc = racha(intentos, eventos);
   if (rc.n) $app.querySelector('.sub').after(h(`<div class="racha ${rc.hoy ? '' : 'pend'}">🔥 <b>${rc.n}</b> ${rc.n === 1 ? 'día seguido' : 'días seguidos'}${rc.hoy ? '' : ' · practica hoy (cualquier actividad cuenta) para mantener tu racha'}</div>`));
   if (enPrueba()) {
-    $app.querySelector('.meta').textContent = 'Prueba gratis: la primera lección completa (alfabeto, sonidos, letra cursiva y primeras palabras).';
+    $app.querySelector('.meta').textContent = 'Prueba gratis: la primera lección completa (primeras letras, sonidos, letra cursiva y primeras palabras).';
     if (sig.tipo === 'elegir' && sig.opciones.length) { await api.registrar('escenario', [sig.opciones[0].s.id]); return vInicio(); }   // sigue con la otra lección de la prueba
     if (['fin', 'elegir'].includes(sig.tipo)) { $app.append(tarjetaFinPrueba()); return; }
   } else {
@@ -2071,7 +2072,7 @@ function seccionPlanes() {
   const ops = NIVELES_TODOS.map(n => `<option value="${n}" ${NIVELES_A_LA_VENTA.includes(n) ? '' : 'disabled'}>${n}${NIVELES_A_LA_VENTA.includes(n) ? '' : ' (próximamente)'}</option>`).join('');
   const el = h(`<div><div class="planes">
     <div class="plan"><h3>Prueba gratis</h3><div class="precio">$0</div><div class="sub">Sin tarjeta</div>
-      <ul><li>Primera lección completa: alfabeto, sonidos, letra cursiva y primeras palabras</li><li>Ejercicios con corrección inmediata</li><li>Repaso de palabras con voz rusa</li></ul>
+      <ul><li>Primera lección completa: primeras letras, sonidos, letra cursiva y primeras palabras</li><li>Ejercicios con corrección inmediata</li><li>Repaso de palabras con voz rusa</li></ul>
       <a class="btn sec" href="#/registro">Empieza gratis</a></div>
     <div class="plan dest"><div class="etq">Suscripción</div><h3>Esencial</h3>
       <div class="campo"><select data-per aria-label="Periodo"><option value="mensual">Pago mensual</option><option value="anual">Pago anual</option></select></div>
@@ -2184,7 +2185,7 @@ function vNuevaClave() {
 // Plan del alumno: 'prueba' solo abre la primera lección (alfabeto). LECCIONES_INICIO = las que no cuentan como «ya avanzó» para la prueba de ubicación
 const LECCIONES_PRUEBA = ['E01'];
 const PLANES_UN_NIVEL = ['nivel', 'gratuito'];   // 'gratuito' = acceso gratuito que habilita la docente: solo las lecciones de plan_nivel, sin vencimiento
-const LECCIONES_INICIO = ['E01', 'E03'];
+const LECCIONES_INICIO = ['E01', 'E01B', 'E03'];
 function enPrueba() {
   if (!perfil || perfil.rol === 'docente') return false;
   if (perfil.plan === 'prueba') return true;
@@ -2194,7 +2195,7 @@ function enPrueba() {
 function tarjetaFinPrueba() {
   const vencido = perfil?.plan && perfil.plan !== 'prueba';
   return h(`<div class="tarjeta"><div class="etq">${vencido ? 'Tu plan terminó' : 'Terminaste tu prueba gratis 🎉'}</div>
-    <h2 style="margin-top:4px">${vencido ? 'Renueva para seguir avanzando' : '¡Ya sabes leer en ruso!'}</h2>
+    <h2 style="margin-top:4px">${vencido ? 'Renueva para seguir avanzando' : '¡Ya lees tus primeras palabras en ruso!'}</h2>
     <p>Para seguir con las siguientes lecciones y el repaso diario, elige una suscripción o compra un nivel. Tu progreso se guarda.</p>
     <div class="acciones"><a class="btn" href="#/planes">Ver planes</a></div></div>`);
 }

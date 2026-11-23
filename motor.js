@@ -25,7 +25,7 @@ const INTERVALOS_DIAS = [1, 3, 7, 21, 60];
 const PESO_REGLA = 12;          // una regla nueva "pesa" como 12 palabras nuevas
 export const PALABRAS_POR_TARJETA = 12;
 
-export const ALFABETO = [['EJ0003', 'АОКМТС'], ['EJ0007', 'РУВХЕН'], ['EJ0013', 'БИЛГПДФЗЭ'], ['EJ0018', 'ЖЧЦШЩЮЯЁЙЫЬЪ']];
+export const ALFABETO = [['EJ0003', 'АОКМТС'], ['EJ0007', 'РУВХН'], ['EJ0013', 'БИЛГПДФЗЭ'], ['EJ0018', 'ЖЧЦШЩЮЯЁЙЫЬЪЕ']];
 export const EJ_REPASO = 'EJ_REPASO', EJ_UBICACION = 'EJ_UBICACION';                        // intentos de los repasos escritos generados con IA
 export const MIN_ESCRITO = 3, MAX_ESCRITO_V = 6, MAX_ESCRITO_G = 2;   // palabras activas vencidas para armar un repaso escrito
 export const ORALES = new Set(['TE01', 'TE15', 'TE17']);   // escuchar y repetir, producción oral, leer en voz alta
@@ -71,10 +71,14 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
   // cada ejercicio hereda como prerrequisito los grupos del alfabeto que piden sus reglas.
   const alf = ALFABETO.filter(([id]) => ejs.some(e => e.id === id)).map(([id]) => id);
   const grupoDe = {}; ALFABETO.forEach(([id, ls]) => [...ls].forEach(l => grupoDe[l] = id));
+  // con actividades «Letra nueva»: la regla exige solo las letras que usa (no el grupo completo)
+  const letraEj = {}; for (const e of ejs) { const c = contenidoDe(e); if (c.tipo === 'letra' && c.letra) letraEj[c.letra.toUpperCase()] = e.id; }
   const gruposRegla = g => {
     const r = regla[g]; if (!r) return [];
     const txt = [r.nombre, r.descripcion, r.ejemplo, r.explicacion].join(' ').toUpperCase();
-    const k = Math.max(-1, ...[...new Set(txt.match(/[А-ЯЁ]/g) || [])].map(l => alf.indexOf(grupoDe[l])));
+    const letras = [...new Set(txt.match(/[А-ЯЁ]/g) || [])];
+    if (letras.length && letras.every(l => letraEj[l])) return [...new Set(letras.map(l => letraEj[l]))];
+    const k = Math.max(-1, ...letras.map(l => alf.indexOf(grupoDe[l])));
     return alf.slice(0, k + 1);
   };
   for (const e of ejs) {
