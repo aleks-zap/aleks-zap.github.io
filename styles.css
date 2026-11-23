@@ -226,3 +226,5 @@ kbd{border:1px solid var(--linea);border-bottom-width:2px;border-radius:5px;padd
 .letra-grande .cur-fuente{font:96px "CursivaPlataforma","Bad Script",cursive;line-height:1}
 .notas-letra{margin:12px 0 0;padding-left:1.2em}.notas-letra li{margin:.35em 0}
 .anim-letra{display:block;max-width:100%;width:420px;margin:12px auto 0;border-radius:12px;border:1px solid var(--linea);background:#fff}
+.aviso-version{position:sticky;top:0;z-index:60;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;background:#fff1dd;border-bottom:1px solid #f0c36d;padding:8px 14px;font-weight:600}
+.aviso-version .btn{padding:6px 14px}

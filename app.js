@@ -3,6 +3,7 @@ import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, r
 let vocabCache = null, formasCache = null;
 let reglasCache = null;
 
+const VERSION_APP = '2026-11-22b';   // cambia junto con version.json en cada publicación
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $app = document.getElementById('app');
 const $nav = document.getElementById('nav');
@@ -656,7 +657,9 @@ async function renderizar(ej) {
     case 'descubrir': return rDescubrir(c);
     case 'trazo': return rTrazo(c);
     case 'letra': return rLetra(c);
-    default: return rItems(c);
+    default:
+      if (!Array.isArray(c.items)) return { el: h(`<p class="error">Esta actividad necesita la versión nueva de la plataforma. Cierra la app (o la pestaña) y vuelve a abrirla.</p>`), corregir() { throw new Error('Actualiza la plataforma para hacer esta actividad.'); } };
+      return rItems(c);
   }
 }
 
@@ -2669,4 +2672,16 @@ async function iniciar() {
   router();
 }
 window.addEventListener('hashchange', router);
+// versión nueva publicada: si el dispositivo abrió una copia vieja guardada, se ofrece actualizar (borra la copia y recarga)
+async function comprobarVersion() {
+  try {
+    const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' }); if (!r.ok) return;
+    const { v } = await r.json();
+    if (!v || v === VERSION_APP || document.getElementById('aviso-version')) return;
+    const b = h(`<div id="aviso-version" class="aviso-version">Hay una versión nueva de la plataforma. <button class="btn" type="button">Actualizar</button></div>`);
+    b.querySelector('button').onclick = async () => { try { for (const k of await caches.keys()) await caches.delete(k); } catch {} location.reload(); };
+    document.body.prepend(b);
+  } catch { /* sin conexión */ }
+}
 iniciar();
+if (!DEMO) { comprobarVersion(); document.addEventListener('visibilitychange', () => { if (!document.hidden) comprobarVersion(); }); }
