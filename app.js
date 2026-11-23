@@ -3,7 +3,7 @@ import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, r
 let vocabCache = null, formasCache = null;
 let reglasCache = null;
 
-const VERSION_APP = '2026-11-23c';   // cambia junto con version.json en cada publicación
+const VERSION_APP = '2026-11-23d';   // cambia junto con version.json en cada publicación
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $app = document.getElementById('app');
 const $nav = document.getElementById('nav');

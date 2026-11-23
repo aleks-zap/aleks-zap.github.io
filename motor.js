@@ -82,7 +82,8 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
     return alf.slice(0, k + 1);
   };
   for (const e of ejs) {
-    if (alf.includes(e.id) || contenidoDe(e).tipo === 'letra') { e.reqReglas = []; continue; }        // las letras se presentan sin reglas previas
+    if (alf.includes(e.id)) { e.reqReglas = []; continue; }
+    if (contenidoDe(e).tipo === 'letra') { e.reqReglas = cierre(lista(e.prerrequisitos).filter(x => /^[GP]\d/.test(x))); continue; }   // las letras solo piden las reglas indicadas a mano (p. ej. P05 antes de Е), sin exigir otras letras
     const extra = e.reqReglas.flatMap(gruposRegla);
     if (extra.length) e.reqEj = [...new Set([...e.reqEj, ...extra])];
   }
