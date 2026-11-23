@@ -3,7 +3,7 @@ import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, r
 let vocabCache = null, formasCache = null;
 let reglasCache = null;
 
-const VERSION_APP = '2026-11-22b';   // cambia junto con version.json en cada publicación
+const VERSION_APP = '2026-11-23';   // cambia junto con version.json en cada publicación
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $app = document.getElementById('app');
 const $nav = document.getElementById('nav');
@@ -454,10 +454,27 @@ function leerDialogo(texto, rate = 0.9) {
     speechSynthesis.speak(u);
   }
 }
+// Palabras con audio grabado (campo «audio» de una tarjeta, p. ej. "M508"): se usa el archivo en vez de la voz del dispositivo
+const audiosPalabra = new Map();
+const claveVoz = t => String(t || '').toLowerCase().replace(/\u0301/g, '').replace(/ё/g, 'е').trim();
+function registrarAudios(ejercicios) {
+  for (const e of ejercicios || []) {
+    let c; try { c = typeof e.contenido === 'string' ? JSON.parse(e.contenido) : e.contenido; } catch { continue; }
+    for (const t of c?.tarjetas || []) if (t.audio) audiosPalabra.set(claveVoz(t.ru), t.audio);
+  }
+}
 function botonVoz(texto) {
-  if (!HAY_VOZ) return document.createTextNode('');
+  const archivo = audiosPalabra.get(claveVoz(texto));
+  if (!HAY_VOZ && !archivo) return document.createTextNode('');
   const b = h(`<button class="voz" type="button" title="Escuchar" aria-label="Escuchar">🔊</button>`);
-  b.onclick = e => { e.stopPropagation(); hablar(texto); }; return b;
+  b.onclick = async e => {
+    e.stopPropagation();
+    const a = audiosPalabra.get(claveVoz(texto));
+    if (!a) return hablar(texto);
+    const u = await api.url('materiales', `audio/${a}.mp3`);
+    if (u) { speechSynthesis?.cancel?.(); new Audio(u).play().catch(() => hablar(texto)); } else hablar(texto);
+  };
+  return b;
 }
 // ---------- Racha: días seguidos con actividad (cuenta hoy o, si hoy aún no hay, hasta ayer)
 function racha(intentos, eventos) {
@@ -515,6 +532,7 @@ function traduccionOk(resp, es, acepta = []) {     // acepta: otras respuestas c
     || (r.length >= 4 && (` ${o} `).includes(` ${r} `)));
 }
 function rDescubrir(c) {
+  registrarAudios([{ contenido: c }]);
   const el = h(`<div class="desc-una"></div>`); const res = c.tarjetas.map(() => null);
   const r = { el, propio: true, alTerminar: null, corregir() {
     const det = c.tarjetas.map((t, i) => ({ q: t.ru, r: res[i] ? 'reconoció' : '', c: t.ru, ok: true, p: false })).filter((_, i) => res[i]);
@@ -709,7 +727,7 @@ async function progreso() {
 async function cargarModelo(intentos, eventos, oralesZoom = false) {
   const [escenarios, ejercicios, tipos, temas, reglas, voc, formas] = await Promise.all([api.todosEscenarios(), api.ejerciciosLigeros(), api.tipos(), api.temas(),
     reglasCache || api.reglas(), vocabCache || api.vocabUso(), formasCache || fetch('formas.json').then(r => r.ok ? r.json() : { f: {}, m: {} }).catch(() => ({ f: {}, m: {} }))]);
-  reglasCache = reglas; vocabCache = voc; formasCache = formas;
+  reglasCache = reglas; vocabCache = voc; formasCache = formas; registrarAudios(ejercicios);
   const ia = perfil?.rol === 'docente' ? false : await iaActiva();
   const vocab = Object.fromEntries(voc.map(v => [v.id, v]));
   if (enPrueba()) {                                                        // prueba gratis: solo las primeras lecciones
@@ -1840,7 +1858,7 @@ function editarFila(tabla, fila, campos, alGuardar, extra) {
 const NOM_CAMPO = { items: 'Pregunta', q: 'enunciado', options: 'opciones (una por línea)', answers: 'respuestas aceptadas (una por línea)', answer: 'respuesta correcta',
   pairs: 'parejas (izquierda | derecha, una por línea)', tarjetas: 'Tarjeta', ru: 'ruso', es: 'español', tr: 'transcripción', nota: 'nota', elementos: 'elementos (uno por línea)',
   textos: 'textos (uno por línea)', criterios: 'criterios para la corrección con IA', modelo: 'ejemplo de respuesta', tiles: 'fichas (una por línea)', preguntas: 'preguntas (una por línea)',
-  texto: 'texto', categorias: 'categoría', respuestas: 'respuestas', acepta: 'otras traducciones aceptadas (una por línea; no se muestran al alumno)' };
+  texto: 'texto', audio: 'audio grabado (código del material, p. ej. M508)', categorias: 'categoría', respuestas: 'respuestas', acepta: 'otras traducciones aceptadas (una por línea; no se muestran al alumno)' };
 const NO_EDITAR = new Set(['tipo', 'img', 'imagen', 'grupo', 'fuente', 'temas', 'banco', 'n', 'id', 'ref']);
 function camposContenido(c) {
   const out = [];
