@@ -3,7 +3,7 @@ import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, r
 let vocabCache = null, formasCache = null;
 let reglasCache = null;
 
-const VERSION_APP = '2026-11-23d';   // cambia junto con version.json en cada publicación
+const VERSION_APP = '2026-11-27a';   // cambia junto con version.json en cada publicación
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $app = document.getElementById('app');
 const $nav = document.getElementById('nav');
@@ -99,7 +99,7 @@ async function crearSupabase() {
       return out;
     },
     async reglas() {
-      const [g, p] = await Promise.all([sb.from('gramatica').select('id,nombre,nivel,descripcion,ejemplo,prerrequisitos,explicacion'), sb.from('pronunciacion').select('id,nombre,nivel,descripcion,ejemplo,prerrequisitos,explicacion')]);
+      const [g, p] = await Promise.all([sb.from('gramatica').select('id,nombre,nivel,descripcion,ejemplo,prerrequisitos,explicacion'), sb.from('pronunciacion').select('*')]);
       return [...ok(g), ...ok(p)];
     },
     async vocabulario(lista) { return lista.length ? ok(await sb.from('vocabulario').select('id,lema,traduccion,categoria').in('id', lista)) : []; },
@@ -422,6 +422,7 @@ function rAbierta(c, ej) {
 }
 // imágenes de materiales dentro de ejercicios y explicaciones: <img data-mat="M123">
 async function resolverImgs(el) {
+  for (const a of el.querySelectorAll('audio[data-aud]:not([src])')) { const u = await api.url('materiales', `audio/${a.dataset.aud}.mp3`); if (u) a.src = u; else a.replaceWith(h(`<span class="sub">(audio ${esc(a.dataset.aud)} no disponible)</span>`)); }
   for (const im of el.querySelectorAll('img[data-mat]:not([src])')) {
     const u = await api.url('materiales', `img/${im.dataset.mat}.jpg`);
     if (u) im.src = u; else im.replaceWith(h(`<span class="sub">(imagen ${esc(im.dataset.mat)} no disponible)</span>`));
@@ -475,6 +476,18 @@ function botonVoz(texto) {
     if (u) { speechSynthesis?.cancel?.(); new Audio(u).play().catch(() => hablar(texto)); } else hablar(texto);
   };
   return b;
+}
+// Ejemplos de las tarjetas de reglas: cada línea con ruso lleva su botón 🔊 (sin la transcripción entre corchetes ni el texto en español)
+function vozEjemplos(raiz) {
+  for (const d of raiz.querySelectorAll('.ej-voz:not([data-ok])')) {
+    d.dataset.ok = '1'; const lineas = d.textContent.split('\n'); d.textContent = '';
+    lineas.forEach((l, i) => {
+      if (i) d.append(document.createElement('br'));
+      d.append(l);
+      const ru = l.replace(/\[[^\]]*\]/g, '').replace(/\|/g, ',').split(/[A-Za-zÁÉÍÓÚáéíóúñÑ"]/)[0].replace(/[\s,;:–—-]+$/, '').trim();
+      if (/[а-яё]/i.test(ru)) d.append(' ', botonVoz(ru));
+    });
+  }
 }
 // ---------- Racha: días seguidos con actividad (cuenta hoy o, si hoy aún no hay, hasta ayer)
 function racha(intentos, eventos) {
@@ -894,9 +907,9 @@ async function vInicio() {
     card.append(l);
   } else if (sig.tipo === 'regla') {
     const r = sig.regla, esP = /^P/.test(r.id);
-    card.append(h(`<div class="etq">${esP ? 'Pronunciación nueva' : 'Regla nueva'}${sig.pendientes > 1 ? ` · quedan ${sig.pendientes} antes del ejercicio` : ''}</div>`));
-    card.append(h(`<div class="regla" style="margin-top:6px"><b style="font-size:18px">${esc(r.nombre)}</b>${r.explicacion ? explicacionHtml(r.explicacion) : `<p style="margin:8px 0">${esc(r.descripcion || '')}</p>`}${r.ejemplo ? `<div class="texto-ru">${esc(r.ejemplo)}</div>` : ''}</div>`));
-    resolverImgs(card);
+    card.append(h(`<div class="etq">${esP ? 'Pronunciación nueva' : 'Regla nueva'}${sig.pendientes > 1 ? ` · quedan ${sig.pendientes}${sig.ejercicio ? ' antes del ejercicio' : ''}` : ''}</div>`));
+    card.append(h(`<div class="regla" style="margin-top:6px"><b style="font-size:18px">${esc(r.nombre)}</b>${explicacionHtml(r.explicacion || r.descripcion || '')}${r.ejemplo ? `<div class="texto-ru ej-voz">${esc(r.ejemplo)}</div>` : ''}</div>`));
+    resolverImgs(card); vozEjemplos(card);
     const b = h(`<div class="acciones"><button class="btn" type="button">Entendido, continuar →</button></div>`);
     b.querySelector('button').onclick = async e => { e.target.disabled = true; await api.registrar('intro', [r.id]); vInicio(); };
     card.append(b);
@@ -905,8 +918,8 @@ async function vInicio() {
     const r = sig.regla;
     card.append(h(`<div class="etq">Repaso de una regla${sig.pendientes > 1 ? ` · quedan ${sig.pendientes}` : ''}</div>`));
     card.append(h(`<p class="instr">Hace poco usaste esta regla con un error. Repásala con calma: la practicarás en tu repaso.</p>`));
-    card.append(h(`<div class="regla" style="margin-top:6px"><b style="font-size:18px">${esc(r.nombre)}</b>${r.explicacion ? explicacionHtml(r.explicacion) : `<p style="margin:8px 0">${esc(r.descripcion || '')}</p>`}${r.ejemplo ? `<div class="texto-ru">${esc(r.ejemplo)}</div>` : ''}</div>`));
-    resolverImgs(card);
+    card.append(h(`<div class="regla" style="margin-top:6px"><b style="font-size:18px">${esc(r.nombre)}</b>${explicacionHtml(r.explicacion || r.descripcion || '')}${r.ejemplo ? `<div class="texto-ru ej-voz">${esc(r.ejemplo)}</div>` : ''}</div>`));
+    resolverImgs(card); vozEjemplos(card);
     const b = h(`<div class="acciones"><button class="btn" type="button">Entendido, continuar →</button></div>`);
     b.querySelector('button').onclick = async e => { e.target.disabled = true; await api.registrar('intro', [r.id]); vInicio(); };
     card.append(b);
@@ -1027,6 +1040,12 @@ async function vEscenario(id) {
       lista.append(f);
     }
     lista.append(h(fila(x, i)));
+    for (const rg of [...todas.values()].filter(g => !vistos.has(g.id) && ids(g.disparadores).includes(x.id))) {
+      vistos.add(rg.id);
+      const f = h(`<div class="fila fila-regla"><div class="num">📘</div><div class="txt"><b>${esc(rg.nombre)}</b><small>Regla nueva · ${esc(rg.id)} · después de este ejercicio (o del primero de su lista que haga el alumno)</small></div><button class="btn sec" type="button">Ver / editar</button></div>`);
+      f.querySelector('button').onclick = () => editarRegla(rg, () => vEscenario(id));
+      lista.append(f);
+    }
   });
   const bOrd = h(`<button class="btn sec" type="button">↕ Cambiar orden</button>`);
   bOrd.onclick = () => ordenarLeccion(lista, r.orden, () => vEscenario(id), bOrd);
@@ -1153,9 +1172,9 @@ document.addEventListener('click', async e => {
   e.preventDefault();
   const r = (reglasCache || (reglasCache = await api.reglas().catch(() => []))).find(g => g.id === a.dataset.regla);
   if (!r) return;
-  const o = h(`<div class="felicidades"><div class="caja" style="text-align:left;max-width:640px;max-height:88vh;overflow:auto"><div class="regla" style="margin-top:0"><b style="font-size:18px">${esc(r.nombre)}</b>${r.explicacion ? explicacionHtml(r.explicacion) : `<p style="margin:8px 0">${esc(r.descripcion || '')}</p>`}${r.ejemplo ? `<div class="texto-ru">${esc(r.ejemplo)}</div>` : ''}</div><div class="acciones"><button class="btn" type="button">Cerrar</button></div></div></div>`);
+  const o = h(`<div class="felicidades"><div class="caja" style="text-align:left;max-width:640px;max-height:88vh;overflow:auto"><div class="regla" style="margin-top:0"><b style="font-size:18px">${esc(r.nombre)}</b>${explicacionHtml(r.explicacion || r.descripcion || '')}${r.ejemplo ? `<div class="texto-ru ej-voz">${esc(r.ejemplo)}</div>` : ''}</div><div class="acciones"><button class="btn" type="button">Cerrar</button></div></div></div>`);
   o.querySelector('button').onclick = () => o.remove(); o.onclick = ev => { if (ev.target === o) o.remove(); };
-  document.body.append(o); resolverImgs(o);
+  document.body.append(o); resolverImgs(o); vozEjemplos(o);
 });
 // Palabras del curso que el alumno escribió en un texto corregido por IA: cuentan como producción para el repaso espaciado
 // (correctas si no aparecen dentro de un error; las palabras objetivo del repaso escrito las evalúa la IA aparte)
@@ -1371,6 +1390,8 @@ function explicacionHtml(txt) {
     const t = l.trim();
     const mImg = t.match(/^\[img:(M\d+)\]$/);
     if (mImg) { cerrar(); out.push(`<img class="img-regla" data-mat="${mImg[1]}" alt="">`); continue; }
+    const mAud = t.match(/^\[audio:(M\d+)\]$/);
+    if (mAud) { cerrar(); out.push(`<audio controls preload="none" data-aud="${mAud[1]}"></audio>`); continue; }
     if (t.startsWith('|')) { const celdas = t.replace(/^\||\|$/g, '').split('|').map(c => c.trim()); if (!celdas.every(c => /^-+$/.test(c))) tabla.push(celdas); continue; }
     cerrar(); if (t) out.push(`<p style="margin:8px 0">${esc(t)}</p>`);
   }
@@ -1466,7 +1487,7 @@ const TABLAS = { habilidades: 'habilidades', gramatica: 'gramatica', pronunciaci
   escenarios: 'escenarios', tipos_ejercicio: 'tipos_ejercicio', materiales: 'materiales', ejercicios: 'ejercicios' };
 const COLS = {
   habilidades: ['id','nombre','descripcion','como_se_mide','estandar_a1','estandar_a2','estandar_b1','estandar_b2','estandar_c1'],
-  gramatica: ['id','nombre','nivel','descripcion','prerrequisitos','ejemplo','explicacion'], pronunciacion: ['id','nombre','nivel','descripcion','prerrequisitos','ejemplo','explicacion'],
+  gramatica: ['id','nombre','nivel','descripcion','prerrequisitos','ejemplo','explicacion'], pronunciacion: ['id','nombre','nivel','descripcion','prerrequisitos','ejemplo','explicacion','disparadores'],
   vocabulario: ['id','lema','traduccion','categoria','nivel','escenarios','temas','uso'], temas: ['id','nombre'],
   escenarios: ['id','nombre','nivel','temas','orden','objetivo_comunicativo','gramatica_foco','pronunciacion_foco'],
   materiales: ['id','titulo','tipo','fuente','inicio','fin','nivel','escenarios','temas','gramatica_presente','transcripcion','licencia','origen','revisado','funcion'],
@@ -1952,11 +1973,12 @@ function editarRegla(g, alGuardar) {
   const tabla = /^P/.test(g.id) ? 'pronunciacion' : 'gramatica';
   const prev = h(`<div><div class="sub" style="margin-top:8px">Vista previa:</div><div class="regla"></div></div>`);
   const f = editarFila(tabla, g, [['nombre', 'Título de la regla'], ['descripcion', 'Descripción breve (se usa si no hay explicación)', 'area'],
-    ['explicacion', 'Explicación: líneas que empiezan con «|» forman tablas (| a | b |); [img:M123] inserta una imagen', 'area'], ['ejemplo', 'Ejemplo en ruso', 'area']], alGuardar, { el: prev, valor: () => ({}) });
+    ['explicacion', 'Explicación: líneas que empiezan con «|» forman tablas (| a | b |); [img:M123] inserta una imagen y [audio:M123] un audio', 'area'], ['ejemplo', 'Ejemplo en ruso (cada línea lleva su botón 🔊)', 'area'],
+    ...(tabla === 'pronunciacion' ? [['disparadores', 'Se presenta después del primero de estos ejercicios que haga el alumno (EJ…; separados por ;)']] : [])], alGuardar, { el: prev, valor: () => ({}) });
   const pintar = () => {
     const v = k => f.querySelector(`[data-k="${k}"]`).value;
-    prev.querySelector('.regla').innerHTML = `<b style="font-size:18px">${esc(v('nombre'))}</b>${v('explicacion') ? explicacionHtml(v('explicacion')) : `<p>${esc(v('descripcion'))}</p>`}${v('ejemplo') ? `<div class="texto-ru">${esc(v('ejemplo'))}</div>` : ''}`;
-    resolverImgs(prev);
+    prev.querySelector('.regla').innerHTML = `<b style="font-size:18px">${esc(v('nombre'))}</b>${explicacionHtml(v('explicacion') || v('descripcion'))}${v('ejemplo') ? `<div class="texto-ru">${esc(v('ejemplo'))}</div>` : ''}`;
+    resolverImgs(prev); vozEjemplos(prev);
   };
   f.querySelectorAll('[data-k]').forEach(i => i.oninput = pintar); pintar();
 }

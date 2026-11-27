@@ -131,6 +131,9 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
   const m = { ejs, porId, esc, porEj, hecho, grupos, vistos, sorteos, nombreTema, regla, conocidos, elegidos, ultimoHab, totalIntentos: intentos.length, memo,
     formas, vocab, eventos, intentosOrd: ordenados, ahora, oralesZoom, iaActiva, saltados, ubicados, ubicadoEn: evUb ? Date.parse(evUb.creado_en) : null, zoomPend, zoomOk, intentado, reglasR };
   m.mem = memoria(m);
+  // reglas «disparadas»: se presentan justo después del primer ejercicio hecho de su lista (columna disparadores), con sus reglas previas
+  m.cierre = cierre;
+  m.disparadas = reglas.filter(r => lista(r.disparadores).some(id => porEj.has(id) || zoomOk.has(id))).map(r => r.id);
   // lo ubicado que el alumno usó mal (dominado «de mentira»): sale de lo conocido hasta volver a presentarse
   // (tarjeta de presentación) y empieza el ciclo completo de repaso
   const ultIntro = new Map(); for (const v of eventos) if (v.tipo === 'intro') ultIntro.set(v.ref, Date.parse(v.creado_en));
@@ -451,6 +454,8 @@ export function siguienteTarea(m) {
   const est = estadoAlumno(m);
   // prueba de ubicación: lo saltado que el alumno usó mal se vuelve a presentar antes de todo (y empieza su ciclo de repaso)
   if (m.reglasDudosas?.length) { const g = m.reglasDudosas[0]; return { tipo: 'reglaUbicada', regla: m.regla[g] || { id: g, nombre: g }, pendientes: m.reglasDudosas.length }; }
+  const disp = m.cierre(m.disparadas || []).filter(g => !m.conocidos.has(g));
+  if (disp.length) return { tipo: 'regla', regla: m.regla[disp[0]] || { id: disp[0], nombre: disp[0] }, pendientes: disp.length, ejercicio: null, despues: 'disparo' };
   if (m.palabrasOlvidadas?.length) return { tipo: 'palabras', ids: m.palabrasOlvidadas.slice(0, PALABRAS_POR_TARJETA), pendientes: m.palabrasOlvidadas.length, ejercicio: null, despues: 'olvido' };
   // 1) el día empieza con el repaso que toca según el calendario
   const hoy = fechaLocal(m.ahora);
