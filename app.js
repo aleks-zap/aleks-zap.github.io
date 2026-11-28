@@ -3,7 +3,7 @@ import { prepararModelo, estadoAlumno, siguienteTarea, etiquetaTema, panorama, r
 let vocabCache = null, formasCache = null;
 let reglasCache = null;
 
-const VERSION_APP = '2026-11-27a';   // cambia junto con version.json en cada publicación
+const VERSION_APP = '2026-11-27d';   // cambia junto con version.json en cada publicación
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $app = document.getElementById('app');
 const $nav = document.getElementById('nav');
@@ -1035,7 +1035,7 @@ async function vEscenario(id) {
   r.orden.forEach((x, i) => {
     for (const g of x.reqReglas.filter(g => !vistas.has(g))) {
       vistas.add(g); const rg = todas.get(g) || { id: g, nombre: g };
-      const f = h(`<div class="fila fila-regla"><div class="num">📘</div><div class="txt"><b>${esc(rg.nombre)}</b><small>Regla nueva · ${esc(rg.id)}</small></div><button class="btn sec" type="button">Ver / editar</button></div>`);
+      const f = h(`<div class="fila fila-regla"><div class="num">📘</div><div class="txt"><b>${esc(rg.nombre)}</b><small>Regla nueva · ${esc(rg.id)}${(() => { const pe = m.ejs.find(e => !e.escenario && e.gram.includes(g)); return pe ? ` · luego se practica con <a href="#/x/${pe.id}">${esc(pe.id)}</a> (si la lección no tiene otro ejercicio de esta regla a mano)` : ''; })()}</small></div><button class="btn sec" type="button">Ver / editar</button></div>`);
       f.querySelector('button').onclick = () => editarRegla(rg, () => vEscenario(id));
       lista.append(f);
     }

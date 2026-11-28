@@ -120,7 +120,7 @@ export function prepararModelo({ escenarios, ejercicios, tipos, intentos, evento
   // bancos: ejercicios con el mismo «grupo» comparten preguntas; «n» = cuántas mostrar
   const grupos = new Map();
   for (const e of ejs) {
-    const c = contenidoDe(e); e.nMostrar = c.n || null; e.grupo = c.grupo || null;
+    const c = contenidoDe(e); e.nMostrar = c.n || null; e.grupo = c.grupo || null; e.practicaRegla = !!c.practica;   // práctica creada para una regla: puede adelantarse si la regla llega por otro camino
     e.itemsBanco = (c.items || []).map((it, i) => ({ ej: e.id, i, it, temas: lista((it.temas || []).join(';')), v: [...new Set(idsEnTexto(ctx, [it.q, ...(it.answers || []), it.answer, ...(it.options || [])].filter(Boolean).join(' '), new Set(e.reqV)))] }));
     if (e.grupo) { if (!grupos.has(e.grupo)) grupos.set(e.grupo, []); grupos.get(e.grupo).push(...e.itemsBanco); }
   }
@@ -450,6 +450,23 @@ function conPresentacion(m, e, tipo) {
 //  { tipo:'descanso', pendiente }   suficiente por hoy: mucho repaso acumulado
 //  { tipo:'planificar', ref } | { tipo:'repasoDia', ejercicio, k, n } | { tipo:'tarjetas', items }   repaso diario
 //  { tipo:'fin' }
+function practicaPendiente(m, est) {
+  const desde = m.ahora - 2 * DIA, intros = new Map();
+  for (const v of m.eventos) if (v.tipo === 'intro' && /^[GP]\d/.test(v.ref) && m.regla[v.ref]) { const t = Date.parse(v.creado_en); if (t >= desde) intros.set(v.ref, t); }
+  const pend = [...intros].filter(([g, t]) => !m.intentosOrd.some(i => Date.parse(i.creado_en) >= t && m.porId.get(i.ejercicio_id)?.gram.includes(g))).sort((a, b) => b[1] - a[1]);
+  for (const [g] of pend) {
+    const base = e => e.autoc && e.gram.includes(g) && !m.intentado(e.id) && !nuevoDe(m, e).reglas.length && !(e.oral && m.oralesZoom)
+      && (/^G/.test(g) || e.practicaRegla);   // pronunciación: solo los ejercicios creados como práctica de la regla (el alfabeto tiene su propio orden)
+    const ok = e => base(e) && disponible(m, e);
+    const alf = new Set(ALFABETO.map(([id]) => id));
+    // si el alumno llegó a la regla por otro camino: la práctica de su lección sirve aunque esa lección aún no empiece
+    const deOtra = e => base(e) && e.reqEj.filter(id => alf.has(id) || m.porId.get(id)?.tipoC === 'letra').every(id => m.intentado(id));
+    const e = m.ejs.find(e => e.escenario === est.actual && ok(e)) || m.ejs.find(e => e.escenario === est.actual && e.practicaRegla && deOtra(e))
+      || m.ejs.find(e => e.escenario && e.practicaRegla && deOtra(e)) || m.ejs.find(e => !e.escenario && ok(e));
+    if (e) return e;
+  }
+  return null;
+}
 export function siguienteTarea(m) {
   const est = estadoAlumno(m);
   // prueba de ubicación: lo saltado que el alumno usó mal se vuelve a presentar antes de todo (y empieza su ciclo de repaso)
@@ -498,6 +515,9 @@ export function siguienteTarea(m) {
   const rep = repasosPendientes(m, est);
   const tocaRepaso = rep.length && m.totalIntentos % REPASO_CADA === REPASO_CADA - 1;
   if (tocaRepaso) return conPresentacion(m, rep[0], 'repaso');
+  // tarjeta de regla recién presentada: se practica en seguida (ejercicio de la lección actual o de práctica sin lección)
+  const pr = practicaPendiente(m, est);
+  if (pr) return conPresentacion(m, pr, 'nuevo');
 
   if (!est.actual) {
     const ops = opcionesEscenario(m, est);
@@ -631,7 +651,7 @@ export function textoProyeccion(p, { alumno = true } = {}) {
 // Recorre las lecciones por su orden y, dentro de cada una, elige primero lo disponible que menos cosas nuevas exige
 // (igual que el motor para un alumno que empieza de cero).
 export function panorama(m) {
-  const hechos = new Set(), K = new Set(), res = new Map();
+  const hechos = new Set(), K = new Set(), res = new Map(), alfP = new Set(ALFABETO.map(([id]) => id));
   for (const s of m.esc) {
     const rest = m.ejs.filter(e => e.escenario === s.id), orden = [];
     while (rest.length) {
@@ -639,7 +659,14 @@ export function panorama(m) {
       const pool = disp.length ? disp : rest;
       const c = e => e.reqReglas.filter(x => !K.has(x)).length * PESO_REGLA + e.reqV.filter(x => !K.has(x)).length;
       pool.sort((a, b) => ordenManual(a) - ordenManual(b) || c(a) - c(b) || a.id.localeCompare(b.id));
-      const e = pool[0]; orden.push(e); hechos.add(e.id); e.reqReglas.forEach(x => K.add(x)); e.reqV.forEach(x => K.add(x));
+      const e = pool[0];
+      // como para el alumno: cada regla nueva va seguida de su ejercicio de práctica, antes del ejercicio que la pidió
+      for (const g of e.reqReglas.filter(x => !K.has(x))) {
+        const y = rest.find(y => y !== e && y.practicaRegla && y.gram.includes(g) && y.reqEj.filter(id => alfP.has(id) || m.porId.get(id)?.tipoC === 'letra').every(id => hechos.has(id)));
+        if (!y) continue;
+        orden.push(y); hechos.add(y.id); y.reqReglas.forEach(x => K.add(x)); y.reqV.forEach(x => K.add(x)); rest.splice(rest.indexOf(y), 1);
+      }
+      orden.push(e); hechos.add(e.id); e.reqReglas.forEach(x => K.add(x)); e.reqV.forEach(x => K.add(x));
       rest.splice(rest.indexOf(e), 1);
     }
     res.set(s.id, { orden, practica: [] });
